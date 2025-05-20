@@ -10,7 +10,7 @@ from get_user_star_gifts_request import GetUserStarGiftsRequest
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
-chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))  # целевая группа
+chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
 session_file = "userbot_session"
 
 bot = telebot.TeleBot(bot_token)
@@ -44,7 +44,25 @@ def check_knockdowns(user_id: int) -> int:
 
     return loop.run_until_complete(run())
 
-# Приветствие
+# Проверка: уже проходил?
+def is_already_approved(user_id: int) -> bool:
+    try:
+        if not os.path.exists("approved_users.txt"):
+            return False
+        with open("approved_users.txt", "r") as f:
+            return str(user_id) in f.read()
+    except Exception:
+        return False
+
+# Сохраняем user_id прошедших проверку
+def save_approved(user_id: int):
+    try:
+        with open("approved_users.txt", "a") as f:
+            f.write(str(user_id) + "\n")
+    except Exception:
+        print("Не удалось сохранить user_id")
+
+# /start
 @bot.message_handler(commands=["start"])
 def start_message(message):
     markup = telebot.types.InlineKeyboardMarkup()
@@ -59,11 +77,15 @@ def start_message(message):
 def handle_check(call):
     user_id = call.from_user.id
 
+    if is_already_approved(user_id):
+        bot.send_message(call.message.chat.id,
+            "✅ Ты уже прошёл проверку.\nЕсли у тебя есть доступ, не нужно генерировать ссылку повторно.")
+        return
+
     try:
         count = check_knockdowns(user_id)
 
-        if count >= 3:
-            # создаём персональную ссылку
+        if count >= 6:
             invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
             bot.send_message(call.message.chat.id,
                 f"✅ У тебя {count} knockdown-подарков. Доступ разрешён!\n"
@@ -79,14 +101,6 @@ def handle_check(call):
     except Exception:
         bot.send_message(call.message.chat.id, "⚠️ Возникла ошибка при проверке. Попробуй позже.")
         traceback.print_exc()
-
-# Сохраняем user_id прошедших проверку
-def save_approved(user_id: int):
-    try:
-        with open("approved_users.txt", "a") as f:
-            f.write(str(user_id) + "\n")
-    except Exception:
-        print("Не удалось сохранить user_id")
 
 print("🤖 Бот запущен и ожидает...")
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
