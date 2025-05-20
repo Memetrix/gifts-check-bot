@@ -1,69 +1,65 @@
 import os
 import telebot
-import threading
 import asyncio
 import traceback
 from telethon import TelegramClient
-from telethon.tl.types import InputUser
+from telethon.tl.types import InputUserSelf
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 
-# Получаем переменные окружения
+# 📦 Переменные среды
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 
 bot = telebot.TeleBot(bot_token)
-bot.skip_pending = True  # пропускаем старые обновления при перезапуске
+bot.skip_pending = True
 
-# Функция получения knockdown-подарков
-def get_knockdown_count(user_id: int) -> int:
+# 📥 Функция проверки по username
+def check_knockdowns(username: str) -> str:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    async def inner():
+    async def run():
         async with TelegramClient("userbot_session", api_id, api_hash) as client:
-            entity = await client.get_input_entity(user_id)
+            if username:
+                entity = await client.get_input_entity(username)
+            else:
+                entity = InputUserSelf()
+
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
 
-            count = 0
+            knockdown_count = 0
             for g in result.gifts:
                 data = g.to_dict()
-                gift = data.get("gift")
-                if not gift or "attributes" not in gift:
+                gift_data = data.get("gift")
+                if not gift_data or "title" not in gift_data or "slug" not in gift_data:
                     continue
-                for attr in gift["attributes"]:
+                for attr in gift_data.get("attributes", []):
                     if "name" in attr and attr["name"].lower() == "knockdown":
-                        count += 1
+                        knockdown_count += 1
                         break
-            return count
 
-    return loop.run_until_complete(inner())
-
-# Команда /start
-@bot.message_handler(commands=["start"])
-def start_message(message):
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton("🔍 Проверить подарки", callback_data="check_gifts"))
-    bot.send_message(message.chat.id, "Привет! Нажми кнопку ниже, чтобы проверить свои подарки 🎁", reply_markup=markup)
-
-# Обработка кнопки
-@bot.callback_query_handler(func=lambda call: call.data == "check_gifts")
-def handle_check(call):
-    def run_check():
-        user_id = call.from_user.id
-        try:
-            count = get_knockdown_count(user_id)
-            if count >= 6:
-                msg = f"✅ У тебя {count} knockdown-подарков. Доступ разрешён!"
+            if knockdown_count >= 6:
+                return f"✅ У пользователя {username} {knockdown_count} knockdown-подарков. Доступ разрешён!"
             else:
-                msg = f"❌ У тебя только {count} knockdown-подарков. Нужно минимум 6.\nПопробуй докупить на @mrkt"
-            bot.send_message(call.message.chat.id, msg)
-        except Exception:
-            bot.send_message(call.message.chat.id, "⚠️ Возникла внутренняя ошибка при проверке.")
-            print("❌ Ошибка:")
-            traceback.print_exc()
+                return f"❌ У пользователя {username} только {knockdown_count} knockdown-подарков. Нужно минимум 6."
 
-    threading.Thread(target=run_check).start()
+    return loop.run_until_complete(run())
 
-print("🤖 Бот запущен и ожидает...")
+# 📥 Обработка текстовых сообщений
+@bot.message_handler(func=lambda message: True)
+def handle_username(message):
+    username = message.text.strip()
+    if not username.startswith("@"):
+        bot.send_message(message.chat.id, "❗️Пожалуйста, отправь username в формате @username")
+        return
+
+    try:
+        response = check_knockdowns(username)
+        bot.send_message(message.chat.id, response)
+    except Exception:
+        bot.send_message(message.chat.id, "⚠️ Ошибка при проверке подарков.")
+        traceback.print_exc()
+
+print("🤖 MVP бот запущен. Ждёт сообщения...")
 bot.infinity_polling()
