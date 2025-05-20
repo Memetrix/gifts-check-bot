@@ -2,6 +2,7 @@ import os
 import telebot
 import threading
 import asyncio
+import traceback
 from telethon import TelegramClient
 from telethon.tl.types import InputUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
@@ -12,10 +13,10 @@ api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 
 bot = telebot.TeleBot(bot_token)
+bot.skip_pending = True  # пропускаем старые обновления при перезапуске
 
 # Функция получения knockdown-подарков
 def get_knockdown_count(user_id: int) -> int:
-    # Создаём event loop вручную
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -38,7 +39,7 @@ def get_knockdown_count(user_id: int) -> int:
 
     return loop.run_until_complete(inner())
 
-# Обработка /start
+# Команда /start
 @bot.message_handler(commands=["start"])
 def start_message(message):
     markup = telebot.types.InlineKeyboardMarkup()
@@ -57,9 +58,10 @@ def handle_check(call):
             else:
                 msg = f"❌ У тебя только {count} knockdown-подарков. Нужно минимум 6.\nПопробуй докупить на @mrkt"
             bot.send_message(call.message.chat.id, msg)
-        except Exception as e:
-            bot.send_message(call.message.chat.id, "⚠️ Ошибка при проверке подарков.")
-            print("❌ Ошибка:", e)
+        except Exception:
+            bot.send_message(call.message.chat.id, "⚠️ Возникла внутренняя ошибка при проверке.")
+            print("❌ Ошибка:")
+            traceback.print_exc()
 
     threading.Thread(target=run_check).start()
 
