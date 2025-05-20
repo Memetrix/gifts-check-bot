@@ -1,13 +1,9 @@
-from telethon.tl._tl import TLRequest, TLObject
+from telethon.tl.tlobject import TLObject
+from telethon.tl.tlobject import TLRequest
 from telethon.tl.types import InputUser
 from io import BytesIO
 
 class GetUserStarGiftsRequest(TLRequest):
-    """
-    Метод: payments.getUserStarGifts#5e72c7e1
-    Возвращает список подарков, закреплённых на профиле пользователя.
-    """
-
     CONSTRUCTOR_ID = 0x5e72c7e1
     SUBCLASS_OF_ID = 0x6b65b517
     QUALNAME = "payments.GetUserStarGifts"
@@ -25,18 +21,15 @@ class GetUserStarGiftsRequest(TLRequest):
             'limit': self.limit
         }
 
-    def _bytes(self):
+    def write(self):
         b = BytesIO()
         b.write(self.CONSTRUCTOR_ID.to_bytes(4, 'little', signed=False))
-        b.write(self.user_id._bytes())
+        b.write(self.user_id.write())
         b.write(TLObject.serialize_bytes(self.offset))
         b.write(self.limit.to_bytes(4, 'little', signed=True))
         return b.getvalue()
 
-    def write(self):
-        return self._bytes()
-
-    @classmethod
-    def read(cls, b: BytesIO, *args):
-        # Это может быть не нужен, но чтобы не падало при парсинге
-        return cls(user_id=None, offset="", limit=0)
+    @staticmethod
+    def read(b: BytesIO, *args):
+        # Обработка ответа не нужна — Telethon сам разберёт
+        return GetUserStarGiftsRequest(user_id=None)
