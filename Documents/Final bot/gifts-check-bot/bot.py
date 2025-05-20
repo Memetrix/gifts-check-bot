@@ -62,7 +62,7 @@ def handle_check(call):
     try:
         count = check_knockdowns(user_id)
 
-        if count >= 6:
+        if count >= 3:
             # создаём персональную ссылку
             invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
             bot.send_message(call.message.chat.id,
