@@ -1,4 +1,5 @@
 import os
+import time
 import telebot
 import asyncio
 import traceback
@@ -29,7 +30,15 @@ def check_knockdowns(user_id: int) -> int:
                 if not isinstance(entity, InputUser):
                     entity = InputUser(entity.user_id, entity.access_hash)
             except ValueError:
-                return -1
+                # ⛳ userbot сам пишет пользователю
+                try:
+                    await client.send_message(user_id, "👋 Привет! Я проверяю твои подарки…")
+                    await asyncio.sleep(2)
+                    entity = await client.get_input_entity(user_id)
+                    if not isinstance(entity, InputUser):
+                        entity = InputUser(entity.user_id, entity.access_hash)
+                except Exception:
+                    return -1
 
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
             count = 0
@@ -74,12 +83,6 @@ def start_message(message):
                      "Нажми кнопку ниже, чтобы пройти проверку.",
                      reply_markup=markup)
 
-# Любое сообщение — "разморозка"
-@bot.message_handler(func=lambda m: True, content_types=['text'])
-def handle_any_text(message):
-    if message.text.strip().lower() != "/start":
-        bot.send_message(message.chat.id, "👋 Спасибо! Теперь нажми кнопку ещё раз — я смогу тебя проверить.")
-
 # Проверка по кнопке
 @bot.callback_query_handler(func=lambda call: call.data == "check_self")
 def handle_check(call):
@@ -96,10 +99,7 @@ def handle_check(call):
         if count == -1:
             bot.send_message(call.message.chat.id,
                 "❗️Telegram пока не разрешает мне проверить твой профиль.\n\n"
-                "👉 Что делать:\n"
-                "1️⃣ Напиши сюда любое сообщение (например, Привет)\n"
-                "2️⃣ Дождись ответа\n"
-                "3️⃣ Нажми кнопку ещё раз")
+                "Я только что отправил тебе сообщение. Пожалуйста, нажми кнопку ещё раз через пару секунд.")
             return
 
         if count >= 6:
@@ -113,6 +113,7 @@ def handle_check(call):
                 f"❌ У тебя только {count} knockdown-подарков.\n"
                 "Возможно, ты их скрыл или у тебя их недостаточно.\n"
                 "Попробуй докупить недостающие на @mrkt.")
+
     except Exception:
         bot.send_message(call.message.chat.id, "⚠️ Возникла ошибка при проверке. Попробуй позже.")
         traceback.print_exc()
