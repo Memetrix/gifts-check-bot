@@ -24,16 +24,15 @@ def check_knockdowns(user_id: int) -> int:
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
-                await client.get_dialogs()  # помогает в некоторых случаях
+                await client.get_dialogs()
                 entity = await client.get_input_entity(user_id)
                 if not isinstance(entity, InputUser):
                     entity = InputUser(entity.user_id, entity.access_hash)
             except ValueError:
-                return -1  # пользователь не найден или закрыт
+                return -1
 
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
             count = 0
-
             for g in result.gifts:
                 data = g.to_dict()
                 gift_data = data.get("gift")
@@ -43,7 +42,6 @@ def check_knockdowns(user_id: int) -> int:
                     if "name" in attr and attr["name"].lower() == "knockdown":
                         count += 1
                         break
-
             return count
 
     return loop.run_until_complete(run())
@@ -76,7 +74,13 @@ def start_message(message):
                      "Нажми кнопку ниже, чтобы пройти проверку.",
                      reply_markup=markup)
 
-# Обработка кнопки
+# Любое сообщение — "разморозка"
+@bot.message_handler(func=lambda m: True, content_types=['text'])
+def handle_any_text(message):
+    if message.text.strip().lower() != "/start":
+        bot.send_message(message.chat.id, "👋 Спасибо! Теперь нажми кнопку ещё раз — я смогу тебя проверить.")
+
+# Проверка по кнопке
 @bot.callback_query_handler(func=lambda call: call.data == "check_self")
 def handle_check(call):
     user_id = call.from_user.id
@@ -91,10 +95,11 @@ def handle_check(call):
 
         if count == -1:
             bot.send_message(call.message.chat.id,
-                "❗️Telegram не разрешает мне проверить твой профиль.\n\n"
-                "Чтобы пройти проверку:\n"
-                "1️⃣ Отправь мне любое сообщение\n"
-                "2️⃣ Снова нажми кнопку \"Проверить подарки\" ниже")
+                "❗️Telegram пока не разрешает мне проверить твой профиль.\n\n"
+                "👉 Что делать:\n"
+                "1️⃣ Напиши сюда любое сообщение (например, Привет)\n"
+                "2️⃣ Дождись ответа\n"
+                "3️⃣ Нажми кнопку ещё раз")
             return
 
         if count >= 6:
@@ -103,13 +108,11 @@ def handle_check(call):
                 f"✅ У тебя {count} knockdown-подарков. Доступ разрешён!\n"
                 f"Вот твоя персональная ссылка для входа в группу:\n{invite.invite_link}")
             save_approved(user_id)
-
         else:
             bot.send_message(call.message.chat.id,
                 f"❌ У тебя только {count} knockdown-подарков.\n"
                 "Возможно, ты их скрыл или у тебя их недостаточно.\n"
                 "Попробуй докупить недостающие на @mrkt.")
-
     except Exception:
         bot.send_message(call.message.chat.id, "⚠️ Возникла ошибка при проверке. Попробуй позже.")
         traceback.print_exc()
