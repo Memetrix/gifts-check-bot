@@ -60,7 +60,7 @@ def handle_check(call):
     try:
         count = check_knockdowns(user_id)
 
-        if count >= 6:
+        if count >= 3:
             # ✅ Доступ есть → отправляем ссылку
             bot.send_message(call.message.chat.id,
                              f"✅ У тебя {count} knockdown-подарков. Доступ разрешён!\n"
