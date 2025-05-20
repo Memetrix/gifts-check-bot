@@ -14,6 +14,9 @@ class GetUserStarGiftsRequest(TLRequest):
         self.limit = limit
 
     def write(self) -> bytes:
+        return self._bytes()  # Telethon вызывает write → _bytes
+
+    def _bytes(self) -> bytes:
         b = BytesIO()
         b.write(self.CONSTRUCTOR_ID.to_bytes(4, 'little', signed=False))
         b.write(self.user_id.write())
