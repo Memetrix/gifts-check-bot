@@ -3,7 +3,7 @@ import telebot
 import asyncio
 import traceback
 from telethon import TelegramClient
-from telethon.tl.types import InputUser, InputUserSelf
+from telethon.tl.types import PeerUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 
 # Конфигурация
@@ -23,9 +23,7 @@ def check_knockdowns(user_id: int) -> int:
 
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
-            entity = await client.get_input_entity(user_id)
-            if not isinstance(entity, InputUser):
-                entity = InputUser(entity.user_id, entity.access_hash)
+            entity = PeerUser(user_id)  # безопасно для всех пользователей
 
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
             count = 0
@@ -54,7 +52,7 @@ def is_already_approved(user_id: int) -> bool:
     except Exception:
         return False
 
-# Сохраняем user_id прошедших проверку
+# Сохраняем user_id
 def save_approved(user_id: int):
     try:
         with open("approved_users.txt", "a") as f:
