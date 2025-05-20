@@ -3,7 +3,8 @@ import telebot
 import asyncio
 import traceback
 from telethon import TelegramClient
-from telethon.tl.types import PeerUser
+from telethon.tl.types import InputUser, InputUserSelf
+from telethon.errors import ValueError as TelethonValueError
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 
 # Конфигурация
@@ -23,7 +24,12 @@ def check_knockdowns(user_id: int) -> int:
 
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
-            entity = PeerUser(user_id)  # безопасно для всех пользователей
+            try:
+                entity = await client.get_input_entity(user_id)
+                if not isinstance(entity, InputUser):
+                    entity = InputUser(entity.user_id, entity.access_hash)
+            except TelethonValueError:
+                return -1  # специальное значение, если user не найден
 
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
             count = 0
@@ -82,6 +88,12 @@ def handle_check(call):
 
     try:
         count = check_knockdowns(user_id)
+
+        if count == -1:
+            bot.send_message(call.message.chat.id,
+                "❗️Невозможно проверить твой профиль.\n"
+                "Напиши боту любое сообщение или сделай профиль видимым.")
+            return
 
         if count >= 6:
             invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
