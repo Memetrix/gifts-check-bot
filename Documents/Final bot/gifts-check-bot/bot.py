@@ -4,7 +4,6 @@ import asyncio
 import traceback
 from telethon import TelegramClient
 from telethon.tl.types import InputUser, InputUserSelf
-from telethon.errors import ValueError as TelethonValueError
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 
 # Конфигурация
@@ -28,8 +27,8 @@ def check_knockdowns(user_id: int) -> int:
                 entity = await client.get_input_entity(user_id)
                 if not isinstance(entity, InputUser):
                     entity = InputUser(entity.user_id, entity.access_hash)
-            except TelethonValueError:
-                return -1  # специальное значение, если user не найден
+            except ValueError:
+                return -1  # пользователь не найден
 
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
             count = 0
