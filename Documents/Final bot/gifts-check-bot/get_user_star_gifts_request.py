@@ -13,15 +13,7 @@ class GetUserStarGiftsRequest(TLRequest):
         self.offset = offset
         self.limit = limit
 
-    def to_dict(self):
-        return {
-            '_': self.QUALNAME,
-            'user_id': self.user_id.to_dict() if isinstance(self.user_id, TLObject) else self.user_id,
-            'offset': self.offset,
-            'limit': self.limit
-        }
-
-    def write(self):
+    def write(self) -> bytes:
         b = BytesIO()
         b.write(self.CONSTRUCTOR_ID.to_bytes(4, 'little', signed=False))
         b.write(self.user_id.write())
@@ -29,7 +21,10 @@ class GetUserStarGiftsRequest(TLRequest):
         b.write(self.limit.to_bytes(4, 'little', signed=True))
         return b.getvalue()
 
-    @staticmethod
-    def read(b: BytesIO, *args):
-        # Обработка ответа не нужна — Telethon сам разберёт
-        return GetUserStarGiftsRequest(user_id=None)
+    def to_dict(self):
+        return {
+            '_': self.QUALNAME,
+            'user_id': self.user_id.to_dict() if isinstance(self.user_id, TLObject) else self.user_id,
+            'offset': self.offset,
+            'limit': self.limit
+        }
