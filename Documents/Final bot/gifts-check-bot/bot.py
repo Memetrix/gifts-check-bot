@@ -27,7 +27,7 @@ def check_knockdowns_via_channel(user_id: int) -> int:
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
                 channel = await client.get_entity(channel_username)
-                participants = await client.get_participants(channel)
+                participants = await client.get_participants(channel, aggressive=True)
                 target = next((u for u in participants if u.id == user_id), None)
 
                 if not target:
