@@ -5,14 +5,14 @@ import traceback
 from telethon import TelegramClient
 from telethon.tl.types import InputUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
+from db import is_approved, save_approved  # подключаем PostgreSQL
 
 # Конфигурация
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
-channel_username = os.getenv("CHANNEL_USERNAME", "@narrator")  # Используем username
-
+channel_username = os.getenv("CHANNEL_USERNAME", "@narrator")
 session_file = "userbot_session"
 
 bot = telebot.TeleBot(bot_token)
@@ -31,7 +31,7 @@ def check_knockdowns_via_channel(user_id: int) -> int:
                 target = next((u for u in participants if u.id == user_id), None)
 
                 if not target:
-                    return -2  # не подписан на канал
+                    return -2  # не подписан
 
                 entity = InputUser(target.id, target.access_hash)
 
@@ -54,24 +54,6 @@ def check_knockdowns_via_channel(user_id: int) -> int:
 
     return loop.run_until_complete(run())
 
-# Проверка: уже проходил?
-def is_already_approved(user_id: int) -> bool:
-    try:
-        if not os.path.exists("approved_users.txt"):
-            return False
-        with open("approved_users.txt", "r") as f:
-            return str(user_id) in f.read()
-    except Exception:
-        return False
-
-# Сохраняем user_id
-def save_approved(user_id: int):
-    try:
-        with open("approved_users.txt", "a") as f:
-            f.write(str(user_id) + "\n")
-    except Exception:
-        print("Не удалось сохранить user_id")
-
 # /start
 @bot.message_handler(commands=["start"])
 def start_message(message):
@@ -86,8 +68,9 @@ def start_message(message):
 @bot.callback_query_handler(func=lambda call: call.data == "check_self")
 def handle_check(call):
     user_id = call.from_user.id
+    username = call.from_user.username or None
 
-    if is_already_approved(user_id):
+    if is_approved(user_id):
         bot.send_message(call.message.chat.id,
             "✅ Ты уже прошёл проверку.\nЕсли у тебя есть доступ, не нужно генерировать ссылку повторно.")
         return
@@ -111,7 +94,7 @@ def handle_check(call):
             bot.send_message(call.message.chat.id,
                 f"✅ У тебя {count} knockdown-подарков. Доступ разрешён!\n"
                 f"Вот твоя персональная ссылка для входа в группу:\n{invite.invite_link}")
-            save_approved(user_id)
+            save_approved(user_id, username, count)
         else:
             bot.send_message(call.message.chat.id,
                 f"❌ У тебя только {count} knockdown-подарков.\n"
