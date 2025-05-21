@@ -11,13 +11,14 @@ api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
-channel_id = int(os.getenv("CHANNEL_ID", "2608127062"))  # канал @narrator
+channel_username = os.getenv("CHANNEL_USERNAME", "@narrator")  # Используем username
+
 session_file = "userbot_session"
 
 bot = telebot.TeleBot(bot_token)
 bot.skip_pending = True
 
-# Проверка knockdown-подарков через канал
+# Проверка через get_participants
 def check_knockdowns_via_channel(user_id: int) -> int:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -25,12 +26,12 @@ def check_knockdowns_via_channel(user_id: int) -> int:
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
-                # получаем всех участников канала
-                participants = await client.get_participants(channel_id)
+                channel = await client.get_entity(channel_username)
+                participants = await client.get_participants(channel)
                 target = next((u for u in participants if u.id == user_id), None)
 
                 if not target:
-                    return -2  # пользователь НЕ подписан на канал
+                    return -2  # не подписан на канал
 
                 entity = InputUser(target.id, target.access_hash)
 
@@ -38,7 +39,6 @@ def check_knockdowns_via_channel(user_id: int) -> int:
                 print("Ошибка при получении access_hash через канал:", e)
                 return -1
 
-            # теперь делаем проверку подарков
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
             count = 0
             for g in result.gifts:
@@ -79,7 +79,7 @@ def start_message(message):
     markup.add(telebot.types.InlineKeyboardButton("🔍 Проверить подарки", callback_data="check_self"))
     bot.send_message(message.chat.id,
         "Привет! Я проверяю, есть ли у тебя минимум 6 knockdown‑подарков 🎁\n"
-        "Но сначала подпишись на канал @narrator, иначе я не смогу тебя проверить.",
+        "Но сначала подпишись на канал @narrator — иначе я не смогу тебя проверить.",
         reply_markup=markup)
 
 # Кнопка
