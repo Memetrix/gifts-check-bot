@@ -3,7 +3,7 @@ import asyncio
 import traceback
 import telebot
 from telethon import TelegramClient
-from telethon.tl.types import InputUser
+from telethon.tl.types import InputUser, PeerChannel
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 from db import is_approved, save_approved
 
@@ -12,23 +12,24 @@ api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
-channel_username = os.getenv("CHANNEL_USERNAME", "@narrator")
+channel_id = int(os.getenv("CHANNEL_ID", "2608127062"))  # ID @narrator
 session_file = "userbot_session"
 
 bot = telebot.TeleBot(bot_token)
 bot.skip_pending = True
 
-# Проверка knockdown-подарков через канал
+# Проверка knockdown-подарков через channel_id
 def check_knockdowns_from_channel(user_id: int) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
-                channel = await client.get_entity(channel_username)
+                channel = PeerChannel(channel_id)
                 participants = await client.get_participants(channel, aggressive=True)
                 user = next((u for u in participants if u.id == user_id), None)
 
                 if not user:
-                    return -2, None  # пользователь не найден в канале
+                    print("❌ Пользователь не найден среди участников канала")
+                    return -2, None
 
                 entity = InputUser(user.id, user.access_hash)
 
@@ -44,6 +45,7 @@ def check_knockdowns_from_channel(user_id: int) -> (int, str):
                             count += 1
                             break
 
+                print(f"🎁 У пользователя {user_id} найдено knockdown: {count}")
                 return count, user.username
             except Exception as e:
                 print("❌ Ошибка при получении участника или подарков:", e)
@@ -82,7 +84,7 @@ def handle_check(call):
 
         if count == -1:
             bot.send_message(call.message.chat.id,
-                "⚠️ Telegram не даёт проверить профиль. Попробуй позже или свяжись с поддержкой.")
+                "⚠️ Произошла ошибка при попытке проверить твой профиль.\nПопробуй позже.")
             return
 
         if count >= 6:
