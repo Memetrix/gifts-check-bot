@@ -29,13 +29,16 @@ def preload_participants():
             try:
                 channel = PeerChannel(channel_id)
                 await client.get_participants(channel, limit=0)
+
                 total = 0
-                async for user in client.iter_participants(channel, aggressive=True):
+                async for user in client.iter_participants(channel, limit=0, aggressive=True):
                     participants_cache[user.id] = user
                     total += 1
+
                 print(f"✅ Загружено участников: {total}")
             except Exception as e:
                 print("❌ Ошибка при загрузке участников:", e)
+
     asyncio.run(run())
 
 # Проверка knockdown по участнику из кеша
@@ -60,11 +63,13 @@ def check_knockdowns(user_id: int) -> (int, str):
                         if "name" in attr and attr["name"].lower() == "knockdown":
                             count += 1
                             break
+
                 print(f"🎁 У пользователя {user.id} найдено knockdown: {count}")
                 return count, user.username
             except Exception as e:
                 print("❌ Ошибка при проверке подарков:", e)
                 return -1, None
+
     return asyncio.run(run())
 
 # /start
