@@ -24,17 +24,26 @@ def check_knockdowns(user_id: int, username: str = None) -> int:
             try:
                 await client.get_dialogs()
                 entity = await client.get_input_entity(user_id)
-            except Exception:
+                print(f"✅ get_input_entity(user_id) сработал: {entity}")
+            except Exception as e1:
+                print(f"⚠️ get_input_entity(user_id) не сработал: {e1}")
                 if username:
                     try:
                         entity = await client.get_input_entity(f"@{username}")
-                    except Exception:
+                        print(f"✅ fallback через username сработал: {entity}")
+                    except Exception as e2:
+                        print(f"❌ fallback по username тоже не сработал: {e2}")
                         return -1
                 else:
+                    print("❌ username отсутствует, fallback невозможен")
                     return -1
 
             if not isinstance(entity, InputUser):
-                entity = InputUser(entity.user_id, entity.access_hash)
+                try:
+                    entity = InputUser(entity.user_id, entity.access_hash)
+                except Exception as conv_err:
+                    print(f"❌ Не удалось сконвертировать в InputUser: {conv_err}")
+                    return -1
 
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
             count = 0
@@ -47,9 +56,10 @@ def check_knockdowns(user_id: int, username: str = None) -> int:
                     if "name" in attr and attr["name"].lower() == "knockdown":
                         count += 1
                         break
+            print(f"🎁 Найдено knockdown-подарков: {count}")
             return count
 
-    return asyncio.run(run())  # 🔧 исправлено здесь
+    return asyncio.run(run())
 
 # /start
 @bot.message_handler(commands=["start"])
