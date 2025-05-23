@@ -18,8 +18,8 @@ session_file = "userbot_session"
 bot = telebot.TeleBot(bot_token)
 bot.skip_pending = True
 
-# Проверка подписки и подарков
-def check_knockdowns_via_channel(user_id: int) -> (int, str):
+# Проверка knockdown-подарков через канал
+def check_knockdowns_from_channel(user_id: int) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
@@ -28,7 +28,7 @@ def check_knockdowns_via_channel(user_id: int) -> (int, str):
                 user = next((u for u in participants if u.id == user_id), None)
 
                 if not user:
-                    return -2, None  # не подписан
+                    return -2, None  # пользователь не найден в канале
 
                 entity = InputUser(user.id, user.access_hash)
 
@@ -46,7 +46,7 @@ def check_knockdowns_via_channel(user_id: int) -> (int, str):
 
                 return count, user.username
             except Exception as e:
-                print("❌ Ошибка при проверке через канал:", e)
+                print("❌ Ошибка при получении участника или подарков:", e)
                 return -1, None
 
     return asyncio.run(run())
@@ -72,17 +72,17 @@ def handle_check(call):
         return
 
     try:
-        count, username = check_knockdowns_via_channel(user_id)
+        count, username = check_knockdowns_from_channel(user_id)
 
         if count == -2:
             bot.send_message(call.message.chat.id,
-                "❗️Ты не подписан на канал @narrator. Я не могу тебя проверить.\n\n"
+                "❗️Ты не подписан на канал @narrator. Я не могу тебя проверить.\n"
                 "Пожалуйста, подпишись и нажми кнопку ещё раз.")
             return
 
         if count == -1:
             bot.send_message(call.message.chat.id,
-                "⚠️ Произошла ошибка при попытке проверить твой профиль.\nПопробуй позже.")
+                "⚠️ Telegram не даёт проверить профиль. Попробуй позже или свяжись с поддержкой.")
             return
 
         if count >= 6:
