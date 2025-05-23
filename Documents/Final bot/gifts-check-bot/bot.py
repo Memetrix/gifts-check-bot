@@ -18,59 +18,51 @@ session_file = "userbot_session"
 bot = telebot.TeleBot(bot_token)
 bot.skip_pending = True
 
-# Проверка knockdown-подарков через iter_participants с повтором
+# Полная проверка с кешем всех участников
 def check_knockdowns_from_channel(user_id: int) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
-            for attempt in range(2):  # максимум 2 попытки
-                try:
-                    channel = PeerChannel(channel_id)
+            try:
+                channel = PeerChannel(channel_id)
 
-                    # Разогрев
-                    await client.get_participants(channel, limit=0)
+                # Разогрев
+                await client.get_participants(channel, limit=0)
 
-                    user = None
-                    total_checked = 0
+                users = {}
+                total_checked = 0
 
-                    print(f"🔁 Попытка {attempt + 1}: начинаем сканировать участников...")
+                print("🔁 Загружаем всех участников канала...")
 
-                    async for participant in client.iter_participants(channel, aggressive=True):
-                        total_checked += 1
-                        if participant.id == user_id:
-                            user = participant
+                async for participant in client.iter_participants(channel, aggressive=True):
+                    users[participant.id] = participant
+                    total_checked += 1
+
+                print(f"👥 Всего загружено участников: {total_checked}")
+
+                if user_id not in users:
+                    print(f"❌ Пользователь {user_id} не найден среди участников.")
+                    return -2, None
+
+                user = users[user_id]
+                entity = InputUser(user.id, user.access_hash)
+
+                result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
+                count = 0
+                for g in result.gifts:
+                    data = g.to_dict()
+                    gift_data = data.get("gift")
+                    if not gift_data or "title" not in gift_data or "slug" not in gift_data:
+                        continue
+                    for attr in gift_data.get("attributes", []):
+                        if "name" in attr and attr["name"].lower() == "knockdown":
+                            count += 1
                             break
 
-                    print(f"👥 Просмотрено участников: {total_checked}")
-
-                    if user:
-                        entity = InputUser(user.id, user.access_hash)
-
-                        result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
-                        count = 0
-                        for g in result.gifts:
-                            data = g.to_dict()
-                            gift_data = data.get("gift")
-                            if not gift_data or "title" not in gift_data or "slug" not in gift_data:
-                                continue
-                            for attr in gift_data.get("attributes", []):
-                                if "name" in attr and attr["name"].lower() == "knockdown":
-                                    count += 1
-                                    break
-
-                        print(f"🎁 У пользователя {user.id} найдено knockdown: {count}")
-                        return count, user.username
-
-                    else:
-                        print(f"❌ Пользователь {user_id} не найден (попытка {attempt + 1})")
-
-                        if attempt == 0:
-                            await asyncio.sleep(3)  # подождать и попробовать ещё раз
-
-                except Exception as e:
-                    print("❌ Ошибка при проверке через канал:", e)
-                    return -1, None
-
-            return -2, None  # после второй попытки не найден
+                print(f"🎁 У пользователя {user.id} найдено knockdown: {count}")
+                return count, user.username
+            except Exception as e:
+                print("❌ Ошибка при проверке через канал:", e)
+                return -1, None
 
     return asyncio.run(run())
 
