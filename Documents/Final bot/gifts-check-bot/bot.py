@@ -12,23 +12,27 @@ api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
-channel_id = int(os.getenv("CHANNEL_ID", "2608127062"))  # ID @narrator
+channel_id = int(os.getenv("CHANNEL_ID", "2608127062"))
 session_file = "userbot_session"
 
 bot = telebot.TeleBot(bot_token)
 bot.skip_pending = True
 
-# Проверка knockdown-подарков через channel_id
+# Проверка через итерацию участников канала
 def check_knockdowns_from_channel(user_id: int) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
                 channel = PeerChannel(channel_id)
-                participants = await client.get_participants(channel, aggressive=True)
-                user = next((u for u in participants if u.id == user_id), None)
+                user = None
+
+                async for participant in client.iter_participants(channel, aggressive=True):
+                    if participant.id == user_id:
+                        user = participant
+                        break
 
                 if not user:
-                    print("❌ Пользователь не найден среди участников канала")
+                    print(f"❌ Пользователь {user_id} не найден в iter_participants.")
                     return -2, None
 
                 entity = InputUser(user.id, user.access_hash)
@@ -45,10 +49,10 @@ def check_knockdowns_from_channel(user_id: int) -> (int, str):
                             count += 1
                             break
 
-                print(f"🎁 У пользователя {user_id} найдено knockdown: {count}")
+                print(f"🎁 У пользователя {user.id} найдено knockdown: {count}")
                 return count, user.username
             except Exception as e:
-                print("❌ Ошибка при получении участника или подарков:", e)
+                print("❌ Ошибка при проверке через канал:", e)
                 return -1, None
 
     return asyncio.run(run())
