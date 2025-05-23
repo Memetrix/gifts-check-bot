@@ -1,9 +1,9 @@
 import os
-import telebot
 import asyncio
 import traceback
+import telebot
 from telethon import TelegramClient
-from telethon.tl.types import InputUser, InputUserSelf
+from telethon.tl.types import InputUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 from db import is_approved, save_approved
 
@@ -17,11 +17,8 @@ session_file = "userbot_session"
 bot = telebot.TeleBot(bot_token)
 bot.skip_pending = True
 
-# Проверка подарков через user_id (fallback через username)
+# Проверка knockdown-подарков
 def check_knockdowns(user_id: int, username: str = None) -> int:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
@@ -52,7 +49,7 @@ def check_knockdowns(user_id: int, username: str = None) -> int:
                         break
             return count
 
-    return loop.run_until_complete(run())
+    return asyncio.run(run())  # 🔧 исправлено здесь
 
 # /start
 @bot.message_handler(commands=["start"])
