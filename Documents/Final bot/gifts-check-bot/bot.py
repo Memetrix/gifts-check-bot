@@ -18,24 +18,29 @@ session_file = "userbot_session"
 bot = telebot.TeleBot(bot_token)
 bot.skip_pending = True
 
-# Проверка knockdown-подарков через iter_participants
+# Проверка подарков через iter_participants
 def check_knockdowns_from_channel(user_id: int) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
                 channel = PeerChannel(channel_id)
 
-                # 🔥 "разогрев" кеша участников
+                # Разогрев
                 await client.get_participants(channel, limit=0)
 
                 user = None
+                total_checked = 0
+
                 async for participant in client.iter_participants(channel, aggressive=True):
+                    total_checked += 1
                     if participant.id == user_id:
                         user = participant
                         break
 
+                print(f"👥 Просмотрено участников: {total_checked}")
+
                 if not user:
-                    print(f"❌ Пользователь {user_id} не найден в iter_participants.")
+                    print(f"❌ Пользователь {user_id} не найден среди участников.")
                     return -2, None
 
                 entity = InputUser(user.id, user.access_hash)
@@ -91,7 +96,7 @@ def handle_check(call):
 
         if count == -1:
             bot.send_message(call.message.chat.id,
-                "⚠️ Telegram не дал проверить твой профиль. Попробуй позже или напиши в поддержку.")
+                "⚠️ Telegram не дал проверить твой профиль. Попробуй позже или свяжись с поддержкой.")
             return
 
         if count >= 6:
