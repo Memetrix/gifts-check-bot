@@ -3,41 +3,41 @@ import telebot
 import asyncio
 import traceback
 from telethon import TelegramClient
-from telethon.tl.types import InputUser
+from telethon.tl.types import InputUser, InputUserSelf
 from get_user_star_gifts_request import GetUserStarGiftsRequest
-from db import is_approved, save_approved  # подключаем PostgreSQL
+from db import is_approved, save_approved
 
 # Конфигурация
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
-channel_username = os.getenv("CHANNEL_USERNAME", "@narrator")
 session_file = "userbot_session"
 
 bot = telebot.TeleBot(bot_token)
 bot.skip_pending = True
 
-# Проверка через get_participants
-def check_knockdowns_via_channel(user_id: int) -> int:
+# Проверка подарков через user_id (fallback через username)
+def check_knockdowns(user_id: int, username: str = None) -> int:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
-                channel = await client.get_entity(channel_username)
-                participants = await client.get_participants(channel, aggressive=True)
-                target = next((u for u in participants if u.id == user_id), None)
+                await client.get_dialogs()
+                entity = await client.get_input_entity(user_id)
+            except Exception:
+                if username:
+                    try:
+                        entity = await client.get_input_entity(f"@{username}")
+                    except Exception:
+                        return -1
+                else:
+                    return -1
 
-                if not target:
-                    return -2  # не подписан
-
-                entity = InputUser(target.id, target.access_hash)
-
-            except Exception as e:
-                print("Ошибка при получении access_hash через канал:", e)
-                return -1
+            if not isinstance(entity, InputUser):
+                entity = InputUser(entity.user_id, entity.access_hash)
 
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
             count = 0
@@ -61,7 +61,7 @@ def start_message(message):
     markup.add(telebot.types.InlineKeyboardButton("🔍 Проверить подарки", callback_data="check_self"))
     bot.send_message(message.chat.id,
         "Привет! Я проверяю, есть ли у тебя минимум 6 knockdown‑подарков 🎁\n"
-        "Но сначала подпишись на канал @narrator — иначе я не смогу тебя проверить.",
+        "Нажми кнопку ниже, чтобы пройти проверку.",
         reply_markup=markup)
 
 # Кнопка
@@ -76,17 +76,12 @@ def handle_check(call):
         return
 
     try:
-        count = check_knockdowns_via_channel(user_id)
-
-        if count == -2:
-            bot.send_message(call.message.chat.id,
-                "❗️Ты не подписан на канал @narrator. Я не могу тебя проверить.\n\n"
-                "Пожалуйста, подпишись и нажми кнопку ещё раз.")
-            return
+        count = check_knockdowns(user_id, username)
 
         if count == -1:
             bot.send_message(call.message.chat.id,
-                "⚠️ Произошла ошибка при попытке проверить твой профиль.\nПопробуй позже.")
+                "❗️Telegram пока не разрешает мне проверить твой профиль.\n\n"
+                "Пожалуйста, напиши мне любое сообщение или укажи username в профиле, чтобы я смог тебя проверить.")
             return
 
         if count >= 6:
