@@ -23,7 +23,11 @@ def check_knockdowns_from_channel(user_id: int) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
-                participants = await client.get_participants(channel_id)
+                # ✅ Получаем объект канала по ID
+                channel = await client.get_entity(channel_id)
+                participants = await client.get_participants(channel)
+
+                # Ищем нужного пользователя
                 target = next((u for u in participants if u.id == user_id), None)
 
                 if not target:
@@ -44,7 +48,7 @@ def check_knockdowns_from_channel(user_id: int) -> (int, str):
                             count += 1
                             break
 
-                print(f"🎁 У пользователя {user_id} найдено knockdown: {count}")
+                print(f"🎁 У пользователя {user.id} найдено knockdown: {count}")
                 return count, target.username
             except Exception as e:
                 print("❌ Ошибка при проверке через канал:", e)
@@ -99,5 +103,5 @@ def handle_check(call):
         bot.send_message(call.message.chat.id, "⚠️ Внутренняя ошибка. Попробуй позже.")
         traceback.print_exc()
 
-print("🤖 Бот запущен и использует get_participants()")
+print("🤖 Бот с проверкой через get_participants() запущен")
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
