@@ -33,8 +33,20 @@ def get_connection():
         sslmode="require"
     )
 
-async def check_and_kick(user, client):
+async def check_and_kick(user, client, approved_ids):
     try:
+        # 1. Если user.id не в approved_users → кик без проверки
+        if user.id not in approved_ids:
+            print(f"🚫 @{user.username or '???'} ({user.id}) — НЕ в approved_users → кик сразу")
+            bot.ban_chat_member(chat_id, user.id)
+            bot.unban_chat_member(chat_id, user.id)
+            try:
+                bot.send_message(user.id, "🚫 Ты был удалён из группы, так как не проходил проверку.")
+            except:
+                print(f"⚠️ Не удалось отправить сообщение @{user.username or user.id}")
+            return True
+
+        # 2. Если в approved_users → проверить knockdown
         entity = InputUser(user.id, user.access_hash)
 
         result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
@@ -71,42 +83,32 @@ async def main():
     async with TelegramClient(session_file, api_id, api_hash) as client:
         group = await client.get_entity(chat_id)
 
-        # Загружаем всех участников группы в список
-        print("📥 Загружаем участников группы...")
+        # Загружаем участников группы
         participants = []
         async for user in client.iter_participants(group):
             participants.append(user)
-        print(f"👥 Всего участников в группе: {len(participants)}")
+        print(f"👥 Всего в группе: {len(participants)}")
 
+        # Загружаем approved_users
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT user_id FROM approved_users")
                 approved_ids = set(row[0] for row in cur.fetchall())
+        print(f"📋 В approved_users: {len(approved_ids)} записей")
 
-        print(f"📋 В таблице approved_users: {len(approved_ids)} записей")
-
-        seen_ids = set()
         total_checked = 0
         total_skipped = 0
 
         for user in participants:
-            if user.id in approved_ids:
-                seen_ids.add(user.id)
-                ok = await check_and_kick(user, client)
-                await asyncio.sleep(DELAY)
-                total_checked += 1
-                if not ok:
-                    total_skipped += 1
+            ok = await check_and_kick(user, client, approved_ids)
+            await asyncio.sleep(DELAY)
+            total_checked += 1
+            if not ok:
+                total_skipped += 1
 
-        missing_ids = approved_ids - seen_ids
-
-        print(f"\n✅ Проверено: {total_checked} из {len(approved_ids)}")
+        print(f"\n✅ Готово: проверено {total_checked} участников")
         if total_skipped:
             print(f"⚠️ Пропущено по ошибке: {total_skipped}")
-        if missing_ids:
-            print(f"\n❌ Не найдены в группе: {len(missing_ids)}")
-            for uid in sorted(missing_ids):
-                print(f" - ID: {uid}")
 
 if __name__ == "__main__":
     asyncio.run(main())
