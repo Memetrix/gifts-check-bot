@@ -13,8 +13,7 @@ api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
 session_file = "userbot_session"
-
-DELAY = float(os.getenv("CHECK_DELAY", "1.0"))  # задержка между проверками, по умолчанию 1 сек
+DELAY = float(os.getenv("CHECK_DELAY", "1.0"))
 
 PGHOST = os.getenv("PGHOST")
 PGPORT = os.getenv("PGPORT")
@@ -72,26 +71,42 @@ async def main():
     async with TelegramClient(session_file, api_id, api_hash) as client:
         group = await client.get_entity(chat_id)
 
+        # Загружаем всех участников группы в список
+        print("📥 Загружаем участников группы...")
+        participants = []
+        async for user in client.iter_participants(group):
+            participants.append(user)
+        print(f"👥 Всего участников в группе: {len(participants)}")
+
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT user_id FROM approved_users")
                 approved_ids = set(row[0] for row in cur.fetchall())
 
-        print(f"🔁 Начинаем проход по {len(approved_ids)} пользователям...")
+        print(f"📋 В таблице approved_users: {len(approved_ids)} записей")
 
+        seen_ids = set()
         total_checked = 0
         total_skipped = 0
-        async for user in client.iter_participants(group):
+
+        for user in participants:
             if user.id in approved_ids:
+                seen_ids.add(user.id)
                 ok = await check_and_kick(user, client)
                 await asyncio.sleep(DELAY)
                 total_checked += 1
                 if not ok:
                     total_skipped += 1
 
-        print(f"\n☑️ Готово: проверено {total_checked} / {len(approved_ids)}")
+        missing_ids = approved_ids - seen_ids
+
+        print(f"\n✅ Проверено: {total_checked} из {len(approved_ids)}")
         if total_skipped:
             print(f"⚠️ Пропущено по ошибке: {total_skipped}")
+        if missing_ids:
+            print(f"\n❌ Не найдены в группе: {len(missing_ids)}")
+            for uid in sorted(missing_ids):
+                print(f" - ID: {uid}")
 
 if __name__ == "__main__":
     asyncio.run(main())
