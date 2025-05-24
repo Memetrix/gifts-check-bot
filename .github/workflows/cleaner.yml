@@ -1,0 +1,16 @@
+name: Hourly Cleaner
+
+on:
+  schedule:
+    - cron: '0 * * * *'     # каждый час
+  workflow_dispatch:         # запуск вручную из UI
+
+jobs:
+  redeploy-cleaner:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Railway redeploy
+        run: |
+          curl -X POST https://backboard.railway.app/project/YOUR_PROJECT_ID/service/YOUR_SERVICE_ID/deploy \
+            -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}"
