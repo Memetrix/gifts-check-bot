@@ -12,7 +12,7 @@ api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
-channel_id = int(os.getenv("CHANNEL_ID", "2608127062"))  # ID канала @narrator
+channel_username = os.getenv("CHANNEL_USERNAME", "@narrator")
 session_file = "userbot_session"
 
 bot = telebot.TeleBot(bot_token)
@@ -23,8 +23,8 @@ def check_knockdowns_from_channel(user_id: int) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
-                # ✅ Получаем объект канала по ID
-                channel = await client.get_entity(channel_id)
+                # ✅ Получаем объект канала по username
+                channel = await client.get_entity(channel_username)
                 participants = await client.get_participants(channel)
 
                 # Ищем нужного пользователя
@@ -48,7 +48,7 @@ def check_knockdowns_from_channel(user_id: int) -> (int, str):
                             count += 1
                             break
 
-                print(f"🎁 У пользователя {user.id} найдено knockdown: {count}")
+                print(f"🎁 У пользователя {user_id} найдено knockdown: {count}")
                 return count, target.username
             except Exception as e:
                 print("❌ Ошибка при проверке через канал:", e)
