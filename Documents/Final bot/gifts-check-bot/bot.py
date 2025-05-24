@@ -12,21 +12,25 @@ api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
+channel_id = int(os.getenv("CHANNEL_ID", "2608127062"))  # ID канала @narrator
 session_file = "userbot_session"
 
 bot = telebot.TeleBot(bot_token)
 bot.skip_pending = True
 
-# Проверка knockdown по user_id
-def check_knockdowns(user_id: int) -> (int, str):
+# Проверка через get_participants(channel)
+def check_knockdowns_from_channel(user_id: int) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
-                await client.get_dialogs()
-                entity = await client.get_input_entity(user_id)
+                participants = await client.get_participants(channel_id)
+                target = next((u for u in participants if u.id == user_id), None)
 
-                if not isinstance(entity, InputUser):
-                    entity = InputUser(entity.user_id, entity.access_hash)
+                if not target:
+                    print(f"❌ Пользователь {user_id} не найден в канале.")
+                    return -2, None
+
+                entity = InputUser(target.id, target.access_hash)
 
                 result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
                 count = 0
@@ -41,9 +45,9 @@ def check_knockdowns(user_id: int) -> (int, str):
                             break
 
                 print(f"🎁 У пользователя {user_id} найдено knockdown: {count}")
-                return count, getattr(entity, "username", None)
+                return count, target.username
             except Exception as e:
-                print(f"❌ get_input_entity({user_id}) не сработал: {e}")
+                print("❌ Ошибка при проверке через канал:", e)
                 return -1, None
 
     return asyncio.run(run())
@@ -55,7 +59,7 @@ def start_message(message):
     markup.add(telebot.types.InlineKeyboardButton("🔍 Проверить подарки", callback_data="check_gifts"))
     bot.send_message(message.chat.id,
         "Привет! Я проверяю, есть ли у тебя минимум 6 knockdown‑подарков 🎁\n"
-        "Нажми кнопку ниже, чтобы пройти проверку:",
+        "Нажми кнопку ниже, чтобы пройти проверку.",
         reply_markup=markup)
 
 # Обработка кнопки
@@ -69,12 +73,16 @@ def handle_check(call):
         return
 
     try:
-        count, username = check_knockdowns(user_id)
+        count, username = check_knockdowns_from_channel(user_id)
+
+        if count == -2:
+            bot.send_message(call.message.chat.id,
+                "❗️Ты не подписан на канал @narrator. Я не могу тебя проверить.")
+            return
 
         if count == -1:
             bot.send_message(call.message.chat.id,
-                "❗️Telegram не разрешает мне проверить твой профиль.\n"
-                "Убедись, что ты написал мне в личку или подписан на @narrator.")
+                "⚠️ Ошибка при проверке. Попробуй позже.")
             return
 
         if count >= 6:
@@ -91,5 +99,5 @@ def handle_check(call):
         bot.send_message(call.message.chat.id, "⚠️ Внутренняя ошибка. Попробуй позже.")
         traceback.print_exc()
 
-print("🤖 Бот с проверкой запущен")
+print("🤖 Бот запущен и использует get_participants()")
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
