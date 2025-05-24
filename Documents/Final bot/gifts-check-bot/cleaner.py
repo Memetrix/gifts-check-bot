@@ -32,7 +32,7 @@ def get_connection():
         sslmode="require"
     )
 
-async def check_user_and_kick(user_id, username, client):
+async def check_and_kick(user_id, username, client):
     try:
         entity = await client.get_input_entity(user_id)
         if not isinstance(entity, InputUser):
@@ -51,13 +51,15 @@ async def check_user_and_kick(user_id, username, client):
                     break
 
         if count < 6:
-            print(f"❌ {user_id} ({username}) — {count} knockdown, кикаем")
+            print(f"❌ {user_id} — {count} knockdown → кик")
             bot.ban_chat_member(chat_id, user_id)
             bot.unban_chat_member(chat_id, user_id)
-            bot.send_message(user_id, f"🚫 У тебя осталось {count} knockdown-подарков.\nТы больше не соответствуешь условиям и был удалён из группы.")
+            try:
+                bot.send_message(user_id, f"🚫 У тебя осталось {count} knockdown-подарков.\nТы больше не соответствуешь условиям и был удалён из группы.")
+            except:
+                print(f"⚠️ Не удалось отправить личное сообщение {user_id}")
         else:
-            print(f"✅ {user_id} — {count} knockdown")
-
+            print(f"✅ {user_id} — {count} knockdown → ОК")
     except Exception as e:
         print(f"⚠️ Ошибка при проверке {user_id}: {e}")
         traceback.print_exc()
@@ -68,10 +70,10 @@ async def main():
             with conn.cursor() as cur:
                 cur.execute("SELECT user_id, username FROM approved_users")
                 users = cur.fetchall()
-                print(f"👥 Проверяется: {len(users)} пользователей")
+                print(f"🔁 Начинаем проверку {len(users)} пользователей...")
 
                 for user_id, username in users:
-                    await check_user_and_kick(user_id, username, client)
+                    await check_and_kick(user_id, username, client)
 
 if __name__ == "__main__":
     asyncio.run(main())
