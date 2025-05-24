@@ -12,7 +12,6 @@ api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
-channel_username = os.getenv("CHANNEL_USERNAME", "@narrator")
 session_file = "userbot_session"
 
 PGHOST = os.getenv("PGHOST")
@@ -33,16 +32,11 @@ def get_connection():
         sslmode="require"
     )
 
-async def check_and_kick(user_id, username, client, channel):
+async def check_and_kick(user_id, username, client):
     try:
-        participants = await client.get_participants(channel)
-        target = next((u for u in participants if u.id == user_id), None)
-
-        if not target:
-            print(f"❌ {user_id} не найден в канале @narrator")
-            return
-
-        entity = InputUser(target.id, target.access_hash)
+        entity = await client.get_input_entity(user_id)
+        if not isinstance(entity, InputUser):
+            entity = InputUser(entity.user_id, entity.access_hash)
 
         result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
         count = 0
@@ -61,19 +55,17 @@ async def check_and_kick(user_id, username, client, channel):
             bot.ban_chat_member(chat_id, user_id)
             bot.unban_chat_member(chat_id, user_id)
             try:
-                bot.send_message(user_id, f"🚫 У тебя осталось {count} knockdown-подарков.\nТы был удалён из группы.")
+                bot.send_message(user_id, f"🚫 У тебя осталось {count} knockdown-подарков. Ты был удалён из группы.")
             except:
                 print(f"⚠️ Не удалось отправить сообщение {user_id}")
         else:
             print(f"✅ {user_id} — {count} knockdown → всё ок")
     except Exception as e:
-        print(f"⚠️ Ошибка при проверке {user_id}: {e}")
+        print(f"⚠️ Telegram не дал доступ к {user_id} — пропускаю")
         traceback.print_exc()
 
 async def main():
     async with TelegramClient(session_file, api_id, api_hash) as client:
-        channel = await client.get_entity(channel_username)
-
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT user_id, username FROM approved_users")
@@ -81,7 +73,7 @@ async def main():
                 print(f"🔁 Проверяем {len(users)} пользователей...")
 
                 for user_id, username in users:
-                    await check_and_kick(user_id, username, client, channel)
+                    await check_and_kick(user_id, username, client)
 
 if __name__ == "__main__":
     asyncio.run(main())
