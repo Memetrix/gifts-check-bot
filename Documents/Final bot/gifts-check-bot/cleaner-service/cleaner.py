@@ -11,7 +11,7 @@ from get_user_star_gifts_request import GetUserStarGiftsRequest
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
-chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))  # группа!
+chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
 session_file = "userbot_session"
 
 PGHOST = os.getenv("PGHOST")
@@ -59,9 +59,12 @@ async def check_and_kick(user, client):
         else:
             print(f"✅ @{user.username or '???'} ({user.id}) — {count} knockdown → всё ок")
 
+        return True
+
     except Exception as e:
         print(f"⚠️ Ошибка при проверке @{user.username or '???'} ({user.id}): {e}")
         traceback.print_exc()
+        return False
 
 async def main():
     async with TelegramClient(session_file, api_id, api_hash) as client:
@@ -72,11 +75,20 @@ async def main():
                 cur.execute("SELECT user_id FROM approved_users")
                 approved_ids = set(row[0] for row in cur.fetchall())
 
-        print(f"🔁 Проверяем {len(approved_ids)} пользователей, по участникам группы...")
+        print(f"🔁 Начинаем проход по {len(approved_ids)} пользователям...")
 
+        total_checked = 0
+        total_skipped = 0
         async for user in client.iter_participants(group):
             if user.id in approved_ids:
-                await check_and_kick(user, client)
+                ok = await check_and_kick(user, client)
+                total_checked += 1
+                if not ok:
+                    total_skipped += 1
+
+        print(f"\n☑️ Готово: проверено {total_checked} / {len(approved_ids)}")
+        if total_skipped:
+            print(f"⚠️ Пропущено по ошибке: {total_skipped}")
 
 if __name__ == "__main__":
     asyncio.run(main())
