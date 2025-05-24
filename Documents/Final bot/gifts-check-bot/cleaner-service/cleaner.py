@@ -14,6 +14,8 @@ bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
 session_file = "userbot_session"
 
+DELAY = float(os.getenv("CHECK_DELAY", "1.0"))  # задержка между проверками, по умолчанию 1 сек
+
 PGHOST = os.getenv("PGHOST")
 PGPORT = os.getenv("PGPORT")
 PGDATABASE = os.getenv("PGDATABASE")
@@ -82,6 +84,7 @@ async def main():
         async for user in client.iter_participants(group):
             if user.id in approved_ids:
                 ok = await check_and_kick(user, client)
+                await asyncio.sleep(DELAY)
                 total_checked += 1
                 if not ok:
                     total_skipped += 1
