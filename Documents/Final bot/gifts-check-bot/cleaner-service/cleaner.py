@@ -1,78 +1,74 @@
 import os
 import asyncio
-import traceback
-from telebot import TeleBot
+import psycopg2
 from telethon import TelegramClient
 from telethon.tl.types import InputUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
+from telebot import TeleBot
 
-# Конфигурация
+# Конфиг
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
-bot_token = os.getenv("BOT_TOKEN")
-chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
 session_file = "userbot_session"
-DELAY = float(os.getenv("CHECK_DELAY", "1.0"))
-
+chat_id = int(os.getenv("CHAT_ID"))
+bot_token = os.getenv("BOT_TOKEN")
 bot = TeleBot(bot_token)
 
-async def check_and_kick(user, client):
+# Получение knockdown-подарков
+async def get_knockdown_count_safe(client, entity):
+    count = 0
+    offset = ""
     try:
-        entity = InputUser(user.id, user.access_hash)
-
-        result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
-
-        if not result.gifts:
-            print(f"⚠️ @{user.username or '???'} ({user.id}) — подарки не получены → пропускаем", flush=True)
-            return True
-
-        count = 0
-        for g in result.gifts:
-            data = g.to_dict()
-            gift_data = data.get("gift")
-            if not gift_data or "title" not in gift_data or "slug" not in gift_data:
-                continue
-            for attr in gift_data.get("attributes", []):
-                if "name" in attr and attr["name"].lower() == "knockdown":
-                    count += 1
-                    break
-
-        if count < 6:
-            print(f"❌ @{user.username or '???'} ({user.id}) — {count} knockdown → кик", flush=True)
-            bot.ban_chat_member(chat_id, user.id)
-            bot.unban_chat_member(chat_id, user.id)
-            try:
-                bot.send_message(user.id, f"🚫 У тебя осталось {count} knockdown-подарков. Ты был удалён из группы.")
-            except:
-                print(f"⚠️ Не удалось отправить сообщение @{user.username or user.id}", flush=True)
-        else:
-            print(f"✅ @{user.username or '???'} ({user.id}) — {count} knockdown → всё ок", flush=True)
-
-        return True
-
+        while True:
+            result = await client(GetUserStarGiftsRequest(user_id=entity, offset=offset, limit=100))
+            if not result.gifts:
+                break
+            for g in result.gifts:
+                data = g.to_dict()
+                gift_data = data.get("gift")
+                if not gift_data:
+                    continue
+                for attr in gift_data.get("attributes", []):
+                    if "name" in attr and attr["name"].lower() == "knockdown":
+                        count += 1
+                        break
+            offset = result.next_offset or ""
+            if not offset:
+                break
     except Exception as e:
-        print(f"⚠️ Ошибка при проверке @{user.username or '???'} ({user.id}): {e}", flush=True)
-        traceback.print_exc()
-        return False
+        print(f"⚠️ Ошибка при получении подарков: {e}")
+    return count
 
-async def main():
-    print("🚀 Запускаем cleaner.py", flush=True)
-
+# Считаем общее количество knockdown-подарков
+async def report_total_knockdowns():
     async with TelegramClient(session_file, api_id, api_hash) as client:
-        group = await client.get_entity(chat_id)
+        conn = psycopg2.connect(
+            host=os.getenv("PGHOST"),
+            dbname=os.getenv("PGDATABASE"),
+            user=os.getenv("PGUSER"),
+            password=os.getenv("PGPASSWORD"),
+            port=os.getenv("PGPORT")
+        )
+        cur = conn.cursor()
+        cur.execute("SELECT user_id, username FROM approved_users")
+        rows = cur.fetchall()
+        total = 0
 
-        participants = []
-        async for user in client.iter_participants(group):
-            participants.append(user)
+        for user_id, username in rows:
+            try:
+                entity = await client.get_input_entity(user_id)
+                count = await get_knockdown_count_safe(client, entity)
+                print(f"🎁 {username or user_id} → {count}")
+                total += count
+                await asyncio.sleep(0.3)  # чтобы не поймать FloodWait
+            except Exception as e:
+                print(f"⚠️ Ошибка у {username or user_id}: {e}")
 
-        print(f"👥 В группе: {len(participants)} участников", flush=True)
+        # Отправляем результат
+        bot.send_message(chat_id, f"🎁 Общее количество knockdown-подарков у всех участников: {total}")
 
-        for i, user in enumerate(participants, start=1):
-            print(f"🔎 {i}/{len(participants)} → @{user.username or '???'} ({user.id})", flush=True)
-            await check_and_kick(user, client)
-            await asyncio.sleep(DELAY)
-
-        print("✅ Проверка завершена.", flush=True)
+        cur.close()
+        conn.close()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(report_total_knockdowns())
