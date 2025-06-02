@@ -2,16 +2,15 @@ import os
 import asyncio
 import psycopg2
 from telethon import TelegramClient
+from telethon.tl.types import InputUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
-from telebot import TeleBot
+from datetime import datetime
 
 # Конфигурация
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 session_file = "sessions/userbot_session"
-admin_user_id = int(os.getenv("ADMIN_USER_ID"))  # 👈 Добавь переменную в Railway
-bot_token = os.getenv("BOT_TOKEN")
-bot = TeleBot(bot_token)
+admin_user_id = int(os.getenv("ADMIN_USER_ID"))  # твой Telegram ID
 
 # Получение knockdown-подарков
 async def get_knockdown_count_safe(client, user_id):
@@ -38,7 +37,7 @@ async def get_knockdown_count_safe(client, user_id):
     except Exception as e:
         return -1, str(e)
 
-# Основной запуск
+# Основная функция
 async def main():
     async with TelegramClient(session_file, api_id, api_hash) as client:
         conn = psycopg2.connect(
@@ -52,7 +51,7 @@ async def main():
         cur.execute("SELECT user_id, username FROM approved_users")
         users = cur.fetchall()
 
-        report_lines = ["📋 Knockdown Gifts Report:\n"]
+        report_lines = ["📋 Отчёт по knockdown-подаркам:\n"]
         for user_id, username in users:
             name = f"@{username}" if username else str(user_id)
             count, error = await get_knockdown_count_safe(client, user_id)
@@ -61,12 +60,21 @@ async def main():
             else:
                 report_lines.append(f"🎁 {name}: {count} knockdown")
 
+        # Отправка отчета в Telegram (в личку админу)
         full_report = "\n".join(report_lines)
-        if len(full_report) > 4096:
-            for i in range(0, len(full_report), 4000):
-                bot.send_message(admin_user_id, full_report[i:i+4000])
-        else:
-            bot.send_message(admin_user_id, full_report)
+        for chunk in [full_report[i:i+4000] for i in range(0, len(full_report), 4000)]:
+            try:
+                await client.send_message(admin_user_id, chunk)
+            except Exception as e:
+                print(f"❌ Не удалось отправить сообщение администратору: {e}")
+
+        # Запись в файл
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = f"log_cleaner_{timestamp}.txt"
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(full_report)
+
+        print(f"✅ Лог сохранён в {log_path}")
 
 if __name__ == "__main__":
     asyncio.run(main())
