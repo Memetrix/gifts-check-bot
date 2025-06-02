@@ -11,6 +11,7 @@ api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 session_file = "sessions/userbot_session"
 admin_user_id = int(os.getenv("ADMIN_USER_ID"))
+slava_user_id = 1911659577  # @slavasemenchuk
 chat_id = int(os.getenv("CHAT_ID"))
 
 # Подсчёт подарков
@@ -53,7 +54,6 @@ async def main():
         report_lines = ["📋 Отчёт по knockdown-подаркам:\n"]
         total_users = 0
 
-        # Только текущие участники группы
         async for user in client.iter_participants(chat_id):
             total_users += 1
             user_id = user.id
@@ -66,19 +66,19 @@ async def main():
             count, error = await get_knockdown_count_safe(client, user_id, user.access_hash)
             if error:
                 report_lines.append(f"⚠️ {username}: ошибка — {error}")
-            else:
-                report_lines.append(f"🎁 {username}: {count} knockdown")
+            elif count == 0:
+                report_lines.append(f"🚫 {username}: 0 knockdown")
 
         report_lines.append(f"\n👥 Users in group — {total_users}")
 
-        # Сохраняем в .txt
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_path = f"log_cleaner_{timestamp}.txt"
         with open(log_path, "w", encoding="utf-8") as f:
             f.write("\n".join(report_lines))
 
-        # Отправляем файл тебе
-        await client.send_file(admin_user_id, log_path, caption="📄 Отчёт по knockdown")
+        # Отправка отчёта
+        for uid in [admin_user_id, slava_user_id]:
+            await client.send_file(uid, log_path, caption="📄 Отчёт по knockdown")
 
 if __name__ == "__main__":
     asyncio.run(main())
