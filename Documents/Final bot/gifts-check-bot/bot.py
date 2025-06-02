@@ -1,33 +1,24 @@
 import os
 import asyncio
 import traceback
-import telebot
+from datetime import datetime, timedelta
+from telebot import TeleBot, types
 from telethon import TelegramClient
 from telethon.tl.types import InputUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
-from db import is_approved, save_approved
+from db import is_approved, save_approved, get_approved_user
 
 # Конфигурация
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
-chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
+chat_id = int(os.getenv("CHAT_ID"))
 session_file = "cleaner-service/sessions/userbot_session"
 
-bot = telebot.TeleBot(bot_token)
+bot = TeleBot(bot_token)
 bot.skip_pending = True
 
-# /start
-@bot.message_handler(commands=["start"])
-def start_message(message):
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton("🔍 Проверить подарки", callback_data="check_gifts"))
-    bot.send_message(message.chat.id,
-        "Привет! Я проверяю, есть ли у тебя минимум 6 knockdown‑подарков 🎁\n"
-        "Нажми кнопку ниже, чтобы пройти проверку.",
-        reply_markup=markup)
-
-# Проверка knockdown-подарков
+# Получение knockdown-подарков
 def check_knockdowns(user_id: int) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
@@ -37,51 +28,73 @@ def check_knockdowns(user_id: int) -> (int, str):
                 if not isinstance(entity, InputUser):
                     entity = InputUser(entity.user_id, entity.access_hash)
 
-                result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
                 count = 0
-                for g in result.gifts:
-                    data = g.to_dict()
-                    gift_data = data.get("gift")
-                    if not gift_data or "title" not in gift_data or "slug" not in gift_data:
-                        continue
-                    for attr in gift_data.get("attributes", []):
-                        if "name" in attr and attr["name"].lower() == "knockdown":
-                            count += 1
-                            break
-
+                offset = ""
+                while True:
+                    result = await client(GetUserStarGiftsRequest(user_id=entity, offset=offset, limit=100))
+                    for g in result.gifts:
+                        data = g.to_dict()
+                        gift = data.get("gift")
+                        if gift:
+                            for attr in gift.get("attributes", []):
+                                if "name" in attr and attr["name"].lower() == "knockdown":
+                                    count += 1
+                                    break
+                    if not result.next_offset:
+                        break
+                    offset = result.next_offset
                 return count, getattr(entity, "username", None)
             except Exception as e:
                 print(f"❌ Ошибка при проверке: {e}")
                 return -1, None
-
     return asyncio.run(run())
 
-# Кнопка
+# /start
+@bot.message_handler(commands=["start"])
+def start_message(message):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔍 Проверить подарки", callback_data="check_gifts"))
+    bot.send_message(message.chat.id,
+        "Привет! Я проверяю, есть ли у тебя минимум 6 knockdown‑подарков 🎁\n"
+        "Нажми кнопку ниже, чтобы пройти проверку.",
+        reply_markup=markup)
+
+# Проверка
 @bot.callback_query_handler(func=lambda call: call.data == "check_gifts")
 def handle_check(call):
     user_id = call.from_user.id
     username = call.from_user.username
+    now = datetime.utcnow()
 
-    # Если пользователь уже был одобрен ранее
-    if is_approved(user_id):
+    user = get_approved_user(user_id)
+
+    if user:
+        invite_link = user[2]
+        created_at = user[3]
         count, _ = check_knockdowns(user_id)
+
         if count < 6:
             bot.send_message(call.message.chat.id,
-                "❌ Ты был верифицирован ранее, но сейчас у тебя меньше 6 knockdown-подарков.\n"
-                "Пожалуйста, купи недостающие подарки на @mrkt.")
+                "❌ Ранее ты проходил проверку, но сейчас у тебя меньше 6 knockdown-подарков.\n"
+                "Пожалуйста, пополни коллекцию и попробуй снова.")
             return
-        else:
-            try:
-                invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
-                bot.send_message(call.message.chat.id,
-                    f"🔁 У тебя снова есть 6+ knockdown-подарков.\n"
-                    f"Вот новая персональная ссылка:\n{invite.invite_link}")
-                return
-            except Exception as e:
-                bot.send_message(call.message.chat.id, f"⚠️ Не удалось создать ссылку: {e}")
-                return
 
-    # Если пользователь не в базе — первая проверка
+        if invite_link and created_at and (now - created_at) < timedelta(minutes=15):
+            bot.send_message(call.message.chat.id,
+                f"🔁 Ты недавно прошёл проверку.\nВот твоя персональная ссылка:\n{invite_link}")
+            return
+
+        try:
+            invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
+            bot.send_message(call.message.chat.id,
+                f"🔁 Ты снова прошёл проверку! Вот новая ссылка:\n{invite.invite_link}")
+            save_approved(user_id, username, count, invite.invite_link)
+            return
+        except Exception as e:
+            bot.send_message(call.message.chat.id, f"⚠️ Не удалось создать ссылку: {e}")
+            return
+
+    # Первый раз
     try:
         count, _ = check_knockdowns(user_id)
         if count >= 6:
@@ -89,43 +102,14 @@ def handle_check(call):
             bot.send_message(call.message.chat.id,
                 f"✅ У тебя {count} knockdown-подарков. Доступ разрешён!\n"
                 f"Вот твоя персональная ссылка:\n{invite.invite_link}")
-            save_approved(user_id, username, count)
+            save_approved(user_id, username, count, invite.invite_link)
         else:
             bot.send_message(call.message.chat.id,
                 f"❌ У тебя только {count} knockdown-подарков.\n"
-                "Пожалуйста, купи недостающие подарки на @mrkt.")
+                "Пожалуйста, купи недостающие на @mrkt.")
     except Exception as e:
-        bot.send_message(call.message.chat.id, f"⚠️ Ошибка при проверке: {e}")
+        bot.send_message(call.message.chat.id, "⚠️ Внутренняя ошибка. Попробуй позже.")
         traceback.print_exc()
 
-# 📊 /sumgifts — общее количество knockdown у участников
-@bot.message_handler(commands=["sumgifts"])
-def handle_sumgifts(message):
-    user_id = message.from_user.id
-    chat_id_tg = message.chat.id
-
-    bot.send_message(chat_id_tg, "🔄 Считаю общее количество knockdown-подарков у участников...")
-
-    async def run():
-        total = 0
-        async with TelegramClient(session_file, api_id, api_hash) as client:
-            group = await client.get_entity(chat_id)
-            async for user in client.iter_participants(group):
-                try:
-                    entity = InputUser(user.id, user.access_hash)
-                    result = await client(GetUserStarGiftsRequest(user_id=entity, offset="", limit=100))
-                    for g in result.gifts:
-                        data = g.to_dict()
-                        for attr in data["gift"].get("attributes", []):
-                            if "name" in attr and attr["name"].lower() == "knockdown":
-                                total += 1
-                                break
-                except:
-                    continue
-
-        bot.send_message(chat_id_tg, f"🎁 Общее количество knockdown-подарков: {total}")
-
-    asyncio.run(run())
-
-print("🤖 Бот запущен и готов считать подарки")
+print("🤖 Бот запущен и готов к работе")
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
