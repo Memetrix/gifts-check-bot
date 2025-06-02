@@ -10,7 +10,7 @@ from db import is_approved, save_approved, get_approved_user
 
 # Конфигурация
 api_id = int(os.getenv("API_ID"))
-api_hash = os.getenv("API_HASH")
+api_hash = os.getenv("API_HASH"))
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID"))
 session_file = "cleaner-service/sessions/userbot_session"
@@ -18,7 +18,7 @@ session_file = "cleaner-service/sessions/userbot_session"
 bot = TeleBot(bot_token)
 bot.skip_pending = True
 
-# Получение knockdown-подарков
+# Проверка knockdown-подарков
 def check_knockdowns(user_id: int, username: str = None, first_name: str = None, last_name: str = None) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
@@ -65,6 +65,8 @@ def check_knockdowns(user_id: int, username: str = None, first_name: str = None,
                     if not result.next_offset:
                         break
                     offset = result.next_offset
+
+                print(f"🎯 Результат для {user_id} → {count} knockdown")  # ✅ добавлен лог
                 return count, getattr(entity, "username", None)
             except Exception as e:
                 print(f"❌ Ошибка при проверке: {e}")
@@ -81,7 +83,7 @@ def start_message(message):
         "Нажми кнопку ниже, чтобы пройти проверку.",
         reply_markup=markup)
 
-# Проверка
+# Обработка inline-кнопки
 @bot.callback_query_handler(func=lambda call: call.data == "check_gifts")
 def handle_check(call):
     user_id = call.from_user.id
@@ -122,7 +124,7 @@ def handle_check(call):
             bot.send_message(call.message.chat.id, f"⚠️ Не удалось создать ссылку: {e}")
             return
 
-    # Первый раз
+    # Первый проход
     try:
         count, _ = check_knockdowns(user_id, username, first_name, last_name)
         if count >= 6:
