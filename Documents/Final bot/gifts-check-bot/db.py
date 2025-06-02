@@ -56,3 +56,16 @@ def save_approved(user_id, username, gift_count, invite_link):
                     invite_created_at = EXCLUDED.invite_created_at
             """, (user_id, username, gift_count, invite_link, datetime.utcnow()))
             conn.commit()
+            
+def get_all_approved_users():
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id, username, gift_count FROM approved_users")
+            return cur.fetchall()
+
+def get_user_gift_count(user_id):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT gift_count FROM approved_users WHERE user_id = %s", (user_id,))
+            row = cur.fetchone()
+            return row[0] if row else None
