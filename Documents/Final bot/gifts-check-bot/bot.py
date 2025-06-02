@@ -1,7 +1,7 @@
 import os
 import asyncio
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from telebot import TeleBot, types
 from telethon import TelegramClient
 from telethon.tl.types import InputUser
@@ -14,36 +14,53 @@ api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID"))
 session_file = "cleaner-service/sessions/userbot_session"
+channel_id = int(os.getenv("CHANNEL_ID", 2608127062))  # @narrator по умолчанию
 
 bot = TeleBot(bot_token)
 bot.skip_pending = True
 
 # Получение knockdown-подарков
-def check_knockdowns(user_id: int, first_name=None, last_name=None) -> (int, str):
+def check_knockdowns(user_id: int, username: str = None, first_name: str = None, last_name: str = None) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
                 await client.get_dialogs()
+
+                # 1. Попытка по user_id
                 try:
                     entity = await client.get_input_entity(user_id)
-                except Exception as e:
-                    if user_id == 961568242 and first_name and last_name:
-                        print("🔍 Попытка найти 961568242 по имени и фамилии")
-                        async for user in client.iter_participants('@narrator'):
-                            if user.first_name == first_name and user.last_name == last_name:
-                                entity = InputUser(user.id, user.access_hash)
-                                print(f"✅ Найден по имени: {user.first_name} {user.last_name}")
-                                break
-                        else:
-                            print("❌ Не удалось найти по имени и фамилии")
-                            return -1, None
+                    print(f"✅ Найден по user_id: {user_id}")
+                except Exception as e_id:
+                    print(f"⚠️ Не найден по user_id: {e_id}")
+
+                    # 2. Попытка по username
+                    if username:
+                        try:
+                            entity = await client.get_input_entity(f"@{username}")
+                            print(f"✅ Найден по username: @{username}")
+                        except Exception as e_username:
+                            print(f"⚠️ Не найден по username: {e_username}")
+                            entity = None
                     else:
-                        print(f"❌ Ошибка при get_input_entity: {e}")
-                        return -1, None
+                        entity = None
 
-                if not isinstance(entity, InputUser):
-                    entity = InputUser(entity.user_id, entity.access_hash)
+                    # 3. Попытка по имени и фамилии через участников канала
+                    if not entity and (first_name or last_name):
+                        print(f"🔍 Ищу по имени: {first_name} {last_name} в канале...")
+                        try:
+                            async for user in client.iter_participants(channel_id, search=first_name or ""):
+                                if user.first_name == first_name and user.last_name == last_name:
+                                    entity = InputUser(user.id, user.access_hash)
+                                    print(f"✅ Найден по имени: {first_name} {last_name}")
+                                    break
+                        except Exception as e_name:
+                            print(f"⚠️ Ошибка при поиске по имени: {e_name}")
 
+                if not entity:
+                    print(f"❌ Не удалось получить entity: {user_id}")
+                    return -1, None
+
+                # Сбор подарков
                 count = 0
                 offset = ""
                 while True:
@@ -59,9 +76,10 @@ def check_knockdowns(user_id: int, first_name=None, last_name=None) -> (int, str
                     if not result.next_offset:
                         break
                     offset = result.next_offset
+
                 return count, getattr(entity, "username", None)
             except Exception as e:
-                print(f"❌ Ошибка при проверке: {e}")
+                print(f"❌ Ошибка в check_knockdowns: {e}")
                 return -1, None
     return asyncio.run(run())
 
@@ -82,14 +100,14 @@ def handle_check(call):
     username = call.from_user.username
     first_name = call.from_user.first_name
     last_name = call.from_user.last_name
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     user = get_approved_user(user_id)
 
     if user:
         invite_link = user[2]
         created_at = user[3]
-        count, _ = check_knockdowns(user_id, first_name, last_name)
+        count, _ = check_knockdowns(user_id, username, first_name, last_name)
 
         if count < 6:
             bot.send_message(call.message.chat.id,
@@ -114,7 +132,7 @@ def handle_check(call):
 
     # Первый раз
     try:
-        count, _ = check_knockdowns(user_id, first_name, last_name)
+        count, _ = check_knockdowns(user_id, username, first_name, last_name)
         if count >= 6:
             invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
             bot.send_message(call.message.chat.id,
