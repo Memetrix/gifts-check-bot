@@ -66,10 +66,12 @@ async def main():
                 continue
 
             if user.username:
-                label = f"<code>@{user.username}</code>"
+                name_part = f"@{user.username}"
             else:
-                name = f"{user.first_name or ''} {user.last_name or ''}".strip()
-                label = f"<code>{name} ({user.id})</code>"
+                name_part = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
+
+            id_part = str(user.id)
+            label = f"{name_part} — {id_part}"
 
             if not user.access_hash:
                 users.append(("⚠️", label, "нет access_hash"))
@@ -90,8 +92,15 @@ async def main():
             f"<i>👥 Users in group — {total}</i>",
             ""
         ]
+
         for icon, label, detail in users:
-            html.append(f"{icon} {label}: {detail}")
+            if "—" in label:
+                name_part, id_part = map(str.strip, label.split("—", 1))
+                name_html = f"<b>{name_part}</b>"
+                id_html = f"<code>{id_part}</code>"
+                html.append(f"{icon} {name_html} — {id_html}: {detail}")
+            else:
+                html.append(f"{icon} <b>{label}</b>: {detail}")
 
         html_report = "\n".join(html)
 
