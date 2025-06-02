@@ -12,7 +12,7 @@ api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID", "-1002655130461"))
-session_file = "userbot_session"
+session_file = "cleaner-service/sessions/userbot_session"
 
 bot = telebot.TeleBot(bot_token)
 bot.skip_pending = True
