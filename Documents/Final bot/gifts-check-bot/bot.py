@@ -19,26 +19,26 @@ bot = TeleBot(bot_token)
 bot.skip_pending = True
 
 # Получение knockdown-подарков
-def check_knockdowns(user_id: int, first_name="", last_name="") -> (int, str):
+def check_knockdowns(user_id: int, first_name=None, last_name=None) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
                 await client.get_dialogs()
-                # Пробуем напрямую
                 try:
                     entity = await client.get_input_entity(user_id)
-                    print(f"✅ Успешно получили entity по user_id: {user_id}")
-                except Exception as e1:
-                    print(f"⚠️ get_input_entity({user_id}) не сработал: {e1}")
-                    # Пытаемся через имя
-                    full_name = f"{first_name} {last_name}".strip().lower()
-                    async for user in client.iter_participants(chat_id):
-                        name = f"{user.first_name or ''} {user.last_name or ''}".strip().lower()
-                        if name == full_name:
-                            entity = InputUser(user.id, user.access_hash)
-                            print(f"✅ Найден по имени: {name}")
-                            break
+                except Exception as e:
+                    if user_id == 961568242 and first_name and last_name:
+                        print("🔍 Попытка найти 961568242 по имени и фамилии")
+                        async for user in client.iter_participants('@narrator'):
+                            if user.first_name == first_name and user.last_name == last_name:
+                                entity = InputUser(user.id, user.access_hash)
+                                print(f"✅ Найден по имени: {user.first_name} {user.last_name}")
+                                break
+                        else:
+                            print("❌ Не удалось найти по имени и фамилии")
+                            return -1, None
                     else:
+                        print(f"❌ Ошибка при get_input_entity: {e}")
                         return -1, None
 
                 if not isinstance(entity, InputUser):
@@ -61,7 +61,7 @@ def check_knockdowns(user_id: int, first_name="", last_name="") -> (int, str):
                     offset = result.next_offset
                 return count, getattr(entity, "username", None)
             except Exception as e:
-                print(f"❌ Ошибка при проверке подарков: {e}")
+                print(f"❌ Ошибка при проверке: {e}")
                 return -1, None
     return asyncio.run(run())
 
@@ -75,13 +75,13 @@ def start_message(message):
         "Нажми кнопку ниже, чтобы пройти проверку.",
         reply_markup=markup)
 
-# Обработка кнопки проверки
+# Проверка
 @bot.callback_query_handler(func=lambda call: call.data == "check_gifts")
 def handle_check(call):
     user_id = call.from_user.id
     username = call.from_user.username
-    first_name = call.from_user.first_name or ""
-    last_name = call.from_user.last_name or ""
+    first_name = call.from_user.first_name
+    last_name = call.from_user.last_name
     now = datetime.utcnow()
 
     user = get_approved_user(user_id)
@@ -112,7 +112,7 @@ def handle_check(call):
             bot.send_message(call.message.chat.id, f"⚠️ Не удалось создать ссылку: {e}")
             return
 
-    # Первый проход
+    # Первый раз
     try:
         count, _ = check_knockdowns(user_id, first_name, last_name)
         if count >= 6:
@@ -125,7 +125,7 @@ def handle_check(call):
             bot.send_message(call.message.chat.id,
                 f"❌ У тебя только {count} knockdown-подарков.\n"
                 "Пожалуйста, купи недостающие на @mrkt.")
-    except Exception:
+    except Exception as e:
         bot.send_message(call.message.chat.id, "⚠️ Внутренняя ошибка. Попробуй позже.")
         traceback.print_exc()
 
