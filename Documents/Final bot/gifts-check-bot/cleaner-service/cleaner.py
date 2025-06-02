@@ -1,82 +1,84 @@
 import os
 import asyncio
 import psycopg2
-from telebot import TeleBot
-from db import get_all_approved_users, get_user_gift_count
+from telethon import TelegramClient
+from telethon.tl.types import InputUser
+from get_user_star_gifts_request import GetUserStarGiftsRequest
+from datetime import datetime
 
 # Конфигурация
-bot_token = os.getenv("BOT_TOKEN")
+api_id = int(os.getenv("API_ID"))
+api_hash = os.getenv("API_HASH")
+session_file = "sessions/userbot_session"
+admin_user_id = int(os.getenv("ADMIN_USER_ID"))
 chat_id = int(os.getenv("CHAT_ID"))
-admin_id = 1462824  # твой user_id
-slava_id = 1911659577
 
-bot = TeleBot(bot_token)
-bot.skip_pending = True
-
-def get_connection():
-    return psycopg2.connect(
-        dbname=os.getenv("PGDATABASE"),
-        user=os.getenv("PGUSER"),
-        password=os.getenv("PGPASSWORD"),
-        host=os.getenv("PGHOST"),
-        port=os.getenv("PGPORT"),
-        sslmode="require"
-    )
-
-async def run_cleaner():
-    print("📋 Cleaner стартовал (без Telethon)")
-    message_lines = ["📋 Проверка участников:\n"]
-
-    # Получаем список всех участников чата (через бот API)
-    participants = []
+# Подсчёт подарков
+async def get_knockdown_count_safe(client, user_id, access_hash):
+    count = 0
+    offset = ""
     try:
-        for member in bot.get_chat_administrators(chat_id):
-            participants.append(member.user.id)
-
-        offset = 0
-        limit = 200
+        entity = InputUser(user_id, access_hash)
         while True:
-            chat_members = bot.get_chat_members(chat_id, offset, limit)
-            if not chat_members:
+            result = await client(GetUserStarGiftsRequest(user_id=entity, offset=offset, limit=100))
+            if not result.gifts:
                 break
-            for user in chat_members:
-                participants.append(user.user.id)
-            offset += limit
+            for g in result.gifts:
+                gift_data = g.to_dict().get("gift")
+                if not gift_data:
+                    continue
+                for attr in gift_data.get("attributes", []):
+                    if "name" in attr and attr["name"].lower() == "knockdown":
+                        count += 1
+                        break
+            offset = result.next_offset or ""
+            if not offset:
+                break
+        return count, None
     except Exception as e:
-        print(f"⚠️ Не удалось получить участников: {e}")
-        return
+        return -1, str(e)
 
-    print(f"👥 Найдено участников: {len(set(participants))}")
+# Основной запуск
+async def main():
+    async with TelegramClient(session_file, api_id, api_hash) as client:
+        conn = psycopg2.connect(
+            host=os.getenv("PGHOST"),
+            dbname=os.getenv("PGDATABASE"),
+            user=os.getenv("PGUSER"),
+            password=os.getenv("PGPASSWORD"),
+            port=os.getenv("PGPORT")
+        )
+        cur = conn.cursor()
 
-    approved = get_all_approved_users()
-    approved_dict = {row[0]: row for row in approved}
+        report_lines = ["📋 Отчёт по knockdown-подаркам:\n"]
+        total_users = 0
 
-    flagged = 0
-    for user_id in set(participants):
-        record = approved_dict.get(user_id)
-        if not record:
-            message_lines.append(f"⚠️ {user_id} — нет в approved_users")
-            flagged += 1
-            continue
+        # Только текущие участники группы
+        async for user in client.iter_participants(chat_id):
+            total_users += 1
+            user_id = user.id
+            username = f"@{user.username}" if user.username else str(user_id)
 
-        gifts = get_user_gift_count(user_id)
-        if gifts is not None and gifts < 6:
-            message_lines.append(f"⚠️ {user_id} — только {gifts} knockdown")
-            flagged += 1
+            if not user.access_hash:
+                report_lines.append(f"⚠️ {username}: нет access_hash — пропущен")
+                continue
 
-    if flagged == 0:
-        print("✅ Нарушений не найдено")
-        return
+            count, error = await get_knockdown_count_safe(client, user_id, user.access_hash)
+            if error:
+                report_lines.append(f"⚠️ {username}: ошибка — {error}")
+            else:
+                report_lines.append(f"🎁 {username}: {count} knockdown")
 
-    message_lines.append(f"\n👥 Всего в чате: {len(set(participants))}")
-    message = "\n".join(message_lines)
+        report_lines.append(f"\n👥 Users in group — {total_users}")
 
-    # Отправка в личку тебе и Славе
-    try:
-        bot.send_message(admin_id, message)
-        bot.send_message(slava_id, message)
-    except Exception as e:
-        print(f"❗️ Ошибка при отправке отчёта: {e}")
+        # Сохраняем в .txt
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = f"log_cleaner_{timestamp}.txt"
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(report_lines))
+
+        # Отправляем файл тебе
+        await client.send_file(admin_user_id, log_path, caption="📄 Отчёт по knockdown")
 
 if __name__ == "__main__":
-    asyncio.run(run_cleaner())
+    asyncio.run(main())
