@@ -3,9 +3,8 @@ import asyncio
 import traceback
 from datetime import datetime, timedelta, timezone
 from telebot import TeleBot, types
-from telethon import TelegramClient
+from telethon import TelegramClient, functions
 from telethon.tl.types import InputUser
-from telethon.errors import UserNotParticipantError
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 from db import is_approved, save_approved, get_approved_user
 
@@ -19,17 +18,17 @@ session_file = "cleaner-service/sessions/userbot_session"
 bot = TeleBot(bot_token)
 bot.skip_pending = True
 
-# 🔍 Проверка: состоит ли пользователь в группе
+# ✅ Проверка: состоит ли пользователь в группе
 async def is_user_in_group(user_id: int) -> bool:
     async with TelegramClient(session_file, api_id, api_hash) as client:
         try:
             await client.get_dialogs()
-            await client.get_participant(chat_id, user_id)
+            await client(functions.channels.GetParticipantRequest(
+                channel=chat_id,
+                participant=user_id
+            ))
             return True
-        except UserNotParticipantError:
-            return False
-        except Exception as e:
-            print(f"⚠️ Ошибка при проверке членства: {e}")
+        except:
             return False
 
 # Проверка knockdown-подарков
@@ -106,7 +105,7 @@ def handle_check(call):
     last_name = call.from_user.last_name
     now = datetime.now(timezone.utc)
 
-    # 👀 Проверка: уже в группе?
+    # Проверка: уже в группе
     if asyncio.run(is_user_in_group(user_id)):
         bot.send_message(call.message.chat.id, "✅ Ты уже в группе! Всё в порядке.")
         return
