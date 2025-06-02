@@ -6,7 +6,7 @@ from telethon import TelegramClient
 from telethon.tl.types import InputUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 
-# Конфигурация
+# Конфиг
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 session_file = "sessions/userbot_session"
@@ -19,7 +19,6 @@ EXCLUDED_ADMINS = {
     8123231575, 934264793, 5855748096, 7071295533, 7870945546
 }
 
-# Подсчёт knockdown
 async def get_knockdown_count_safe(client, user_id, access_hash):
     count = 0
     offset = ""
@@ -66,42 +65,38 @@ async def main():
             if user_id in EXCLUDED_ADMINS or (username and username in EXCLUDED_ADMINS):
                 continue
 
-            # Формирование метки
             if user.username:
-                label = f"@{user.username}"
-                display = f"<code>{user.username}</code>"
+                label = f"<code>@{user.username}</code>"
             else:
                 name = f"{user.first_name or ''} {user.last_name or ''}".strip()
-                label = f"{name} ({user.id})"
-                display = f"<code>{name}</code>"
+                label = f"<code>{name} ({user.id})</code>"
 
             if not user.access_hash:
-                users.append(("⚠️", display, "нет access_hash"))
+                users.append(("⚠️", label, "нет access_hash"))
                 continue
 
             count, error = await get_knockdown_count_safe(client, user_id, user.access_hash)
             if error:
-                users.append(("⚠️", display, f"ошибка — {error}"))
+                users.append(("⚠️", label, f"ошибка — {error}"))
             elif count < 6:
-                users.append(("❗️", display, f"{count} knockdown"))
+                users.append(("❗️", label, f"{count} knockdown"))
             else:
-                users.append(("🎁", display, f"{count} knockdown"))
+                users.append(("🎁", label, f"{count} knockdown"))
 
-        # Сортировка
         users.sort(key=lambda x: int(x[2].split()[0]) if "knockdown" in x[2] else -1, reverse=True)
 
         html = [
             "<b>📋 Отчёт по knockdown‑подаркам</b>",
             f"<i>👥 Users in group — {total}</i>",
-            "",
+            ""
         ]
         for icon, label, detail in users:
             html.append(f"{icon} {label}: {detail}")
 
-        html_content = "\n".join(html)
+        html_report = "\n".join(html)
 
         for uid in [admin_user_id, slava_user_id]:
-            await client.send_message(uid, html_content, parse_mode="html")
+            await client.send_message(uid, html_report, parse_mode="html")
 
 if __name__ == "__main__":
     asyncio.run(main())
