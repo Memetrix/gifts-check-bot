@@ -1,26 +1,26 @@
 import os
 import asyncio
 import psycopg2
+from datetime import datetime
 from telethon import TelegramClient
 from telethon.tl.types import InputUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
-from datetime import datetime
 
 # Конфигурация
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 session_file = "sessions/userbot_session"
 admin_user_id = int(os.getenv("ADMIN_USER_ID"))
-slava_user_id = 1911659577  # @slavasemenchuk
+slava_user_id = 1911659577
 chat_id = int(os.getenv("CHAT_ID"))
 
-# Админы, которых исключаем из логов (username без @ и user_id — на всякий случай)
+# Исключения — админы и системные аккаунты
 EXCLUDED_ADMINS = {
-    "gifts_check_bot", "KnockdownClub", "tap_monster", "knockdown_club",
-    8123231575, 934264793, 5855748096, 7071295533
+    "gifts_check_bot", "knockdownclub", "tap_monster", "knockdown_club",
+    8123231575, 934264793, 5855748096, 7071295533, 7870945546
 }
 
-# Подсчёт подарков
+# Подсчёт knockdown-подарков
 async def get_knockdown_count_safe(client, user_id, access_hash):
     count = 0
     offset = ""
@@ -45,7 +45,6 @@ async def get_knockdown_count_safe(client, user_id, access_hash):
     except Exception as e:
         return -1, str(e)
 
-# Основной запуск
 async def main():
     async with TelegramClient(session_file, api_id, api_hash) as client:
         conn = psycopg2.connect(
@@ -57,35 +56,46 @@ async def main():
         )
         cur = conn.cursor()
 
-        report_lines = ["📋 Отчёт по knockdown-подаркам:\n"]
-        total_users = 0
+        report = ["📋 Отчёт по knockdown-подаркам:\n"]
+        results = []
+        total = 0
 
         async for user in client.iter_participants(chat_id):
-            total_users += 1
+            total += 1
             user_id = user.id
-            username = f"@{user.username}" if user.username else str(user_id)
-            username_key = user.username.lower() if user.username else None
+            username = user.username.lower() if user.username else None
+            label = f"@{user.username}" if user.username else str(user_id)
 
-            # Пропуск админов
-            if user_id in EXCLUDED_ADMINS or (username_key and username_key in EXCLUDED_ADMINS):
+            if user_id in EXCLUDED_ADMINS or (username and username in EXCLUDED_ADMINS):
                 continue
 
             if not user.access_hash:
-                report_lines.append(f"⚠️ {username}: нет access_hash — пропущен")
+                results.append((label, -1, "нет access_hash"))
                 continue
 
             count, error = await get_knockdown_count_safe(client, user_id, user.access_hash)
             if error:
-                report_lines.append(f"⚠️ {username}: ошибка — {error}")
-            elif count == 0:
-                report_lines.append(f"🚫 {username}: 0 knockdown")
+                results.append((label, -1, f"ошибка — {error}"))
+            else:
+                results.append((label, count, None))
 
-        report_lines.append(f"\n👥 Users in group — {total_users}")
+        # Сортировка от большего к меньшему
+        results.sort(key=lambda x: x[1], reverse=True)
 
+        for label, count, error in results:
+            if error:
+                report.append(f"⚠️ {label}: {error}")
+            elif count < 6:
+                report.append(f"❗️ {label}: {count} knockdown")
+            else:
+                report.append(f"🎁 {label}: {count} knockdown")
+
+        report.append(f"\n👥 Users in group — {total}")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_path = f"log_cleaner_{timestamp}.txt"
+
         with open(log_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(report_lines))
+            f.write("\n".join(report))
 
         for uid in [admin_user_id, slava_user_id]:
             await client.send_file(uid, log_path, caption="📄 Отчёт по knockdown")
