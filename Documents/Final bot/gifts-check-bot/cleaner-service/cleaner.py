@@ -2,7 +2,6 @@ import os
 import asyncio
 import psycopg2
 from telethon import TelegramClient
-from telethon.tl.types import InputUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 from telebot import TeleBot
 
@@ -10,23 +9,23 @@ from telebot import TeleBot
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 session_file = "userbot_session"
-chat_id = int(os.getenv("CHAT_ID"))
+admin_user_id = int(os.getenv("ADMIN_USER_ID"))  # 👈 Добавь переменную в Railway
 bot_token = os.getenv("BOT_TOKEN")
 bot = TeleBot(bot_token)
 
 # Получение knockdown-подарков
-async def get_knockdown_count_safe(client, entity):
+async def get_knockdown_count_safe(client, user_id):
     count = 0
     offset = ""
     try:
+        entity = await client.get_input_entity(user_id)
         while True:
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset=offset, limit=100))
             if not result.gifts:
                 break
             for g in result.gifts:
-                data = g.to_dict()
-                gift_data = data.get("gift")
-                if not gift_data or "title" not in gift_data or "slug" not in gift_data:
+                gift_data = g.to_dict().get("gift")
+                if not gift_data:
                     continue
                 for attr in gift_data.get("attributes", []):
                     if "name" in attr and attr["name"].lower() == "knockdown":
@@ -35,11 +34,11 @@ async def get_knockdown_count_safe(client, entity):
             offset = result.next_offset or ""
             if not offset:
                 break
+        return count, None
     except Exception as e:
         return -1, str(e)
-    return count, None
 
-# Основная функция
+# Основной запуск
 async def main():
     async with TelegramClient(session_file, api_id, api_hash) as client:
         conn = psycopg2.connect(
@@ -53,29 +52,21 @@ async def main():
         cur.execute("SELECT user_id, username FROM approved_users")
         users = cur.fetchall()
 
-        report_lines = ["📋 Проверка knockdown-подарков:\n"]
+        report_lines = ["📋 Knockdown Gifts Report:\n"]
         for user_id, username in users:
             name = f"@{username}" if username else str(user_id)
-            try:
-                entity = InputUser(user_id, 0)  # access_hash не нужен для кастомных методов
-                count, error = await get_knockdown_count_safe(client, entity)
-                if error:
-                    report_lines.append(f"⚠️ {name}: ошибка — {error}")
-                else:
-                    report_lines.append(f"🎁 {name}: {count} knockdown")
-            except Exception as e:
-                report_lines.append(f"❌ {name}: не удалось проверить — {e}")
+            count, error = await get_knockdown_count_safe(client, user_id)
+            if error:
+                report_lines.append(f"⚠️ {name}: ошибка — {error}")
+            else:
+                report_lines.append(f"🎁 {name}: {count} knockdown")
 
-        # Отправляем отчет по частям
-        chunk = ""
-        for line in report_lines:
-            if len(chunk + "\n" + line) > 4000:
-                bot.send_message(chat_id, chunk)
-                chunk = ""
-            chunk += line + "\n"
-
-        if chunk:
-            bot.send_message(chat_id, chunk)
+        full_report = "\n".join(report_lines)
+        if len(full_report) > 4096:
+            for i in range(0, len(full_report), 4000):
+                bot.send_message(admin_user_id, full_report[i:i+4000])
+        else:
+            bot.send_message(admin_user_id, full_report)
 
 if __name__ == "__main__":
     asyncio.run(main())
