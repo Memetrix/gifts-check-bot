@@ -10,14 +10,15 @@ from datetime import datetime
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 session_file = "sessions/userbot_session"
-admin_user_id = int(os.getenv("ADMIN_USER_ID"))  # твой Telegram ID
+admin_user_id = int(os.getenv("ADMIN_USER_ID"))
+chat_id = int(os.getenv("CHAT_ID"))
 
-# Получение knockdown-подарков
-async def get_knockdown_count_safe(client, user_id):
+# Подсчёт подарков
+async def get_knockdown_count_safe(client, user_id, access_hash):
     count = 0
     offset = ""
     try:
-        entity = await client.get_input_entity(user_id)
+        entity = InputUser(user_id, access_hash)
         while True:
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset=offset, limit=100))
             if not result.gifts:
@@ -37,7 +38,7 @@ async def get_knockdown_count_safe(client, user_id):
     except Exception as e:
         return -1, str(e)
 
-# Основная функция
+# Основной запуск
 async def main():
     async with TelegramClient(session_file, api_id, api_hash) as client:
         conn = psycopg2.connect(
@@ -48,33 +49,36 @@ async def main():
             port=os.getenv("PGPORT")
         )
         cur = conn.cursor()
-        cur.execute("SELECT user_id, username FROM approved_users")
-        users = cur.fetchall()
 
         report_lines = ["📋 Отчёт по knockdown-подаркам:\n"]
-        for user_id, username in users:
-            name = f"@{username}" if username else str(user_id)
-            count, error = await get_knockdown_count_safe(client, user_id)
+        total_users = 0
+
+        # Только текущие участники группы
+        async for user in client.iter_participants(chat_id):
+            total_users += 1
+            user_id = user.id
+            username = f"@{user.username}" if user.username else str(user_id)
+
+            if not user.access_hash:
+                report_lines.append(f"⚠️ {username}: нет access_hash — пропущен")
+                continue
+
+            count, error = await get_knockdown_count_safe(client, user_id, user.access_hash)
             if error:
-                report_lines.append(f"⚠️ {name}: ошибка — {error}")
+                report_lines.append(f"⚠️ {username}: ошибка — {error}")
             else:
-                report_lines.append(f"🎁 {name}: {count} knockdown")
+                report_lines.append(f"🎁 {username}: {count} knockdown")
 
-        # Отправка отчета в Telegram (в личку админу)
-        full_report = "\n".join(report_lines)
-        for chunk in [full_report[i:i+4000] for i in range(0, len(full_report), 4000)]:
-            try:
-                await client.send_message(admin_user_id, chunk)
-            except Exception as e:
-                print(f"❌ Не удалось отправить сообщение администратору: {e}")
+        report_lines.append(f"\n👥 Users in group — {total_users}")
 
-        # Запись в файл
+        # Сохраняем в .txt
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_path = f"log_cleaner_{timestamp}.txt"
         with open(log_path, "w", encoding="utf-8") as f:
-            f.write(full_report)
+            f.write("\n".join(report_lines))
 
-        print(f"✅ Лог сохранён в {log_path}")
+        # Отправляем файл тебе
+        await client.send_file(admin_user_id, log_path, caption="📄 Отчёт по knockdown")
 
 if __name__ == "__main__":
     asyncio.run(main())
