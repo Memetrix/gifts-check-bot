@@ -3,82 +3,68 @@ import asyncio
 import psycopg2
 from telethon import TelegramClient
 from telethon.tl.types import InputUser
+from telethon.errors import UserAdminInvalidError
 from get_user_star_gifts_request import GetUserStarGiftsRequest
-from datetime import datetime
+from telebot import TeleBot
 
 # Конфигурация
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
-session_file = "sessions/userbot_session"
-admin_user_id = int(os.getenv("ADMIN_USER_ID"))
+bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID"))
+session_file = "cleaner-service/sessions/userbot_session"
 
-# Подсчёт подарков
-async def get_knockdown_count_safe(client, user_id, access_hash):
+bot = TeleBot(bot_token)
+admin_copy_id = 1911659577  # @slavasemenchuk
+
+# Получение knockdown-подарков
+async def get_knockdown_count(client, entity):
     count = 0
     offset = ""
     try:
-        entity = InputUser(user_id, access_hash)
         while True:
             result = await client(GetUserStarGiftsRequest(user_id=entity, offset=offset, limit=100))
-            if not result.gifts:
-                break
             for g in result.gifts:
-                gift_data = g.to_dict().get("gift")
-                if not gift_data:
+                gift = g.to_dict().get("gift")
+                if not gift:
                     continue
-                for attr in gift_data.get("attributes", []):
+                for attr in gift.get("attributes", []):
                     if "name" in attr and attr["name"].lower() == "knockdown":
                         count += 1
                         break
-            offset = result.next_offset or ""
-            if not offset:
+            if not result.next_offset:
                 break
-        return count, None
+            offset = result.next_offset
     except Exception as e:
         return -1, str(e)
+    return count, None
 
-# Основной запуск
-async def main():
+# Проверка пользователей
+async def run_cleaner():
     async with TelegramClient(session_file, api_id, api_hash) as client:
-        conn = psycopg2.connect(
-            host=os.getenv("PGHOST"),
-            dbname=os.getenv("PGDATABASE"),
-            user=os.getenv("PGUSER"),
-            password=os.getenv("PGPASSWORD"),
-            port=os.getenv("PGPORT")
-        )
-        cur = conn.cursor()
+        group = await client.get_entity(chat_id)
+        participants = client.iter_participants(group)
+        admins = [a async for a in client.iter_participants(group, filter=1)]  # admin filter = 1
 
-        report_lines = ["📋 Отчёт по knockdown-подаркам:\n"]
-        total_users = 0
+        admin_ids = set(a.id for a in admins)
+        messages = []
 
-        # Только текущие участники группы
-        async for user in client.iter_participants(chat_id):
-            total_users += 1
-            user_id = user.id
-            username = f"@{user.username}" if user.username else str(user_id)
-
-            if not user.access_hash:
-                report_lines.append(f"⚠️ {username}: нет access_hash — пропущен")
+        async for user in participants:
+            if user.bot or user.deleted or user.id in admin_ids:
                 continue
+            try:
+                entity = InputUser(user.id, user.access_hash)
+                count, error = await get_knockdown_count(client, entity)
+                if count == 0:
+                    username = f"@{user.username}" if user.username else f"{user.first_name} {user.last_name or ''}".strip()
+                    messages.append(f"🚫 {username} ({user.id}) — 0 knockdown")
+            except Exception as e:
+                messages.append(f"⚠️ {user.id}: ошибка — {e}")
 
-            count, error = await get_knockdown_count_safe(client, user_id, user.access_hash)
-            if error:
-                report_lines.append(f"⚠️ {username}: ошибка — {error}")
-            else:
-                report_lines.append(f"🎁 {username}: {count} knockdown")
-
-        report_lines.append(f"\n👥 Users in group — {total_users}")
-
-        # Сохраняем в .txt
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = f"log_cleaner_{timestamp}.txt"
-        with open(log_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(report_lines))
-
-        # Отправляем файл тебе
-        await client.send_file(admin_user_id, log_path, caption="📄 Отчёт по knockdown")
+        if messages:
+            full_report = "📋 Отчёт: пользователи с 0 knockdown\n\n" + "\n".join(messages)
+            bot.send_message(chat_id, full_report)
+            bot.send_message(admin_copy_id, full_report)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_cleaner())
