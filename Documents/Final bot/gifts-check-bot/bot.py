@@ -14,7 +14,6 @@ api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID"))
 session_file = "cleaner-service/sessions/userbot_session"
-channel_id = int(os.getenv("CHANNEL_ID", 2608127062))  # @narrator по умолчанию
 
 bot = TeleBot(bot_token)
 bot.skip_pending = True
@@ -25,42 +24,32 @@ def check_knockdowns(user_id: int, username: str = None, first_name: str = None,
         async with TelegramClient(session_file, api_id, api_hash) as client:
             try:
                 await client.get_dialogs()
-
-                # 1. Попытка по user_id
+                entity = None
                 try:
                     entity = await client.get_input_entity(user_id)
                     print(f"✅ Найден по user_id: {user_id}")
-                except Exception as e_id:
-                    print(f"⚠️ Не найден по user_id: {e_id}")
-
-                    # 2. Попытка по username
+                except Exception as e1:
+                    print(f"❌ Не найден по user_id: {e1}")
                     if username:
                         try:
                             entity = await client.get_input_entity(f"@{username}")
                             print(f"✅ Найден по username: @{username}")
-                        except Exception as e_username:
-                            print(f"⚠️ Не найден по username: {e_username}")
-                            entity = None
-                    else:
-                        entity = None
-
-                    # 3. Попытка по имени и фамилии через участников канала
-                    if not entity and (first_name or last_name):
-                        print(f"🔍 Ищу по имени: {first_name} {last_name} в канале...")
-                        try:
-                            async for user in client.iter_participants(channel_id, search=first_name or ""):
-                                if user.first_name == first_name and user.last_name == last_name:
-                                    entity = InputUser(user.id, user.access_hash)
-                                    print(f"✅ Найден по имени: {first_name} {last_name}")
-                                    break
-                        except Exception as e_name:
-                            print(f"⚠️ Ошибка при поиске по имени: {e_name}")
-
+                        except Exception as e2:
+                            print(f"❌ Не найден по username: {e2}")
+                    if entity is None and first_name and last_name:
+                        async for user in client.iter_participants(chat_id):
+                            if user.first_name == first_name and user.last_name == last_name:
+                                entity = await client.get_input_entity(user.id)
+                                print(f"✅ Найден по имени и фамилии: {first_name} {last_name}")
+                                break
+                        else:
+                            print(f"❌ Не удалось найти по имени и фамилии: {first_name} {last_name}")
                 if not entity:
-                    print(f"❌ Не удалось получить entity: {user_id}")
                     return -1, None
 
-                # Сбор подарков
+                if not isinstance(entity, InputUser):
+                    entity = InputUser(entity.user_id, entity.access_hash)
+
                 count = 0
                 offset = ""
                 while True:
@@ -76,10 +65,9 @@ def check_knockdowns(user_id: int, username: str = None, first_name: str = None,
                     if not result.next_offset:
                         break
                     offset = result.next_offset
-
                 return count, getattr(entity, "username", None)
             except Exception as e:
-                print(f"❌ Ошибка в check_knockdowns: {e}")
+                print(f"❌ Ошибка при проверке: {e}")
                 return -1, None
     return asyncio.run(run())
 
@@ -115,10 +103,14 @@ def handle_check(call):
                 "Пожалуйста, пополни коллекцию и попробуй снова.")
             return
 
-        if invite_link and created_at and (now - created_at) < timedelta(minutes=15):
-            bot.send_message(call.message.chat.id,
-                f"🔁 Ты недавно прошёл проверку.\nВот твоя персональная ссылка:\n{invite_link}")
-            return
+        if invite_link and created_at:
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+
+            if (now - created_at) < timedelta(minutes=15):
+                bot.send_message(call.message.chat.id,
+                    f"🔁 Ты недавно прошёл проверку.\nВот твоя персональная ссылка:\n{invite_link}")
+                return
 
         try:
             invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
