@@ -8,7 +8,7 @@ from telebot import TeleBot
 # Конфигурация
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
-session_file = "userbot_session"
+session_file = "sessions/userbot_session"
 admin_user_id = int(os.getenv("ADMIN_USER_ID"))  # 👈 Добавь переменную в Railway
 bot_token = os.getenv("BOT_TOKEN")
 bot = TeleBot(bot_token)
