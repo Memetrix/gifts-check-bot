@@ -1,94 +1,82 @@
 import os
 import asyncio
-from datetime import datetime
+import psycopg2
 from telebot import TeleBot
-from telethon import TelegramClient
-from telethon.tl.types import InputUser
-from telethon.tl.functions.messages import GetDialogsRequest
-from get_user_star_gifts_request import GetUserStarGiftsRequest
+from db import get_all_approved_users, get_user_gift_count
 
-# Создание нужной папки под сессию
-os.makedirs("cleaner-service/sessions", exist_ok=True)
-
-# Конфиг из переменных окружения
-api_id = int(os.getenv("API_ID"))
-api_hash = os.getenv("API_HASH")
+# Конфигурация
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID"))
-admin_id = 1911659577
-session_file = "cleaner-service/sessions/userbot_session"
+admin_id = 1462824  # твой user_id
+slava_id = 1911659577
 
 bot = TeleBot(bot_token)
+bot.skip_pending = True
 
-# Получение knockdown-подарков
-async def get_knockdown_count(client, entity):
-    count = 0
-    offset = ""
-    try:
-        while True:
-            result = await client(GetUserStarGiftsRequest(user_id=entity, offset=offset, limit=100))
-            if not result.gifts:
-                break
-            for g in result.gifts:
-                gift = g.to_dict().get("gift")
-                if not gift:
-                    continue
-                for attr in gift.get("attributes", []):
-                    if "name" in attr and attr["name"].lower() == "knockdown":
-                        count += 1
-                        break
-            offset = result.next_offset or ""
-            if not offset:
-                break
-    except Exception as e:
-        return -1, f"ошибка — {e}"
-    return count, None
+def get_connection():
+    return psycopg2.connect(
+        dbname=os.getenv("PGDATABASE"),
+        user=os.getenv("PGUSER"),
+        password=os.getenv("PGPASSWORD"),
+        host=os.getenv("PGHOST"),
+        port=os.getenv("PGPORT"),
+        sslmode="require"
+    )
 
-# Основная логика
 async def run_cleaner():
-    report_lines = []
+    print("📋 Cleaner стартовал (без Telethon)")
+    message_lines = ["📋 Проверка участников:\n"]
+
+    # Получаем список всех участников чата (через бот API)
+    participants = []
     try:
-        async with TelegramClient(session_file, api_id, api_hash) as client:
-            group = await client.get_entity(chat_id)
-            participants = []
-            async for user in client.iter_participants(group):
-                participants.append(user)
+        for member in bot.get_chat_administrators(chat_id):
+            participants.append(member.user.id)
 
-            admins = await client.get_participants(group, filter=ChannelParticipantsAdmins())
-
-            admin_ids = {admin.id for admin in admins}
-
-            for user in participants:
-                if user.id in admin_ids:
-                    continue
-
-                try:
-                    entity = InputUser(user.id, user.access_hash)
-                    count, error = await get_knockdown_count(client, entity)
-
-                    username = f"@{user.username}" if user.username else f"{user.first_name or ''} {user.last_name or ''}".strip()
-                    identifier = f"{username or user.id}"
-
-                    if count == 0:
-                        report_lines.append(f"🚫 {identifier} ({user.id}) — 0 knockdown")
-                    elif error:
-                        report_lines.append(f"⚠️ {identifier} ({user.id}): {error}")
-
-                except Exception as e:
-                    username = f"@{user.username}" if user.username else f"{user.first_name or ''} {user.last_name or ''}".strip()
-                    report_lines.append(f"⚠️ {username or user.id} ({user.id}): ошибка — {e}")
-                    continue
-
-        if report_lines:
-            text = "📋 Проверка knockdown-подарков:\n\n" + "\n".join(report_lines)
-            bot.send_message(chat_id, text)
-            if admin_id != chat_id:
-                bot.send_message(admin_id, text)
-
+        offset = 0
+        limit = 200
+        while True:
+            chat_members = bot.get_chat_members(chat_id, offset, limit)
+            if not chat_members:
+                break
+            for user in chat_members:
+                participants.append(user.user.id)
+            offset += limit
     except Exception as e:
-        error_text = f"❌ Ошибка при запуске cleaner: {e}"
-        bot.send_message(admin_id, error_text)
+        print(f"⚠️ Не удалось получить участников: {e}")
+        return
 
-# Запуск
+    print(f"👥 Найдено участников: {len(set(participants))}")
+
+    approved = get_all_approved_users()
+    approved_dict = {row[0]: row for row in approved}
+
+    flagged = 0
+    for user_id in set(participants):
+        record = approved_dict.get(user_id)
+        if not record:
+            message_lines.append(f"⚠️ {user_id} — нет в approved_users")
+            flagged += 1
+            continue
+
+        gifts = get_user_gift_count(user_id)
+        if gifts is not None and gifts < 6:
+            message_lines.append(f"⚠️ {user_id} — только {gifts} knockdown")
+            flagged += 1
+
+    if flagged == 0:
+        print("✅ Нарушений не найдено")
+        return
+
+    message_lines.append(f"\n👥 Всего в чате: {len(set(participants))}")
+    message = "\n".join(message_lines)
+
+    # Отправка в личку тебе и Славе
+    try:
+        bot.send_message(admin_id, message)
+        bot.send_message(slava_id, message)
+    except Exception as e:
+        print(f"❗️ Ошибка при отправке отчёта: {e}")
+
 if __name__ == "__main__":
     asyncio.run(run_cleaner())
