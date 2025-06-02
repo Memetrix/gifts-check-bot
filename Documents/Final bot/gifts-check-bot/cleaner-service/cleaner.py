@@ -6,7 +6,7 @@ from telethon.tl.types import InputUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 from telebot import TeleBot
 
-# Конфиг
+# Конфигурация
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 session_file = "userbot_session"
@@ -26,7 +26,7 @@ async def get_knockdown_count_safe(client, entity):
             for g in result.gifts:
                 data = g.to_dict()
                 gift_data = data.get("gift")
-                if not gift_data:
+                if not gift_data or "title" not in gift_data or "slug" not in gift_data:
                     continue
                 for attr in gift_data.get("attributes", []):
                     if "name" in attr and attr["name"].lower() == "knockdown":
@@ -36,11 +36,11 @@ async def get_knockdown_count_safe(client, entity):
             if not offset:
                 break
     except Exception as e:
-        print(f"⚠️ Ошибка при получении подарков: {e}")
-    return count
+        return -1, str(e)
+    return count, None
 
-# Считаем общее количество knockdown-подарков
-async def report_total_knockdowns():
+# Основная функция
+async def main():
     async with TelegramClient(session_file, api_id, api_hash) as client:
         conn = psycopg2.connect(
             host=os.getenv("PGHOST"),
@@ -51,24 +51,31 @@ async def report_total_knockdowns():
         )
         cur = conn.cursor()
         cur.execute("SELECT user_id, username FROM approved_users")
-        rows = cur.fetchall()
-        total = 0
+        users = cur.fetchall()
 
-        for user_id, username in rows:
+        report_lines = ["📋 Проверка knockdown-подарков:\n"]
+        for user_id, username in users:
+            name = f"@{username}" if username else str(user_id)
             try:
-                entity = await client.get_input_entity(user_id)
-                count = await get_knockdown_count_safe(client, entity)
-                print(f"🎁 {username or user_id} → {count}")
-                total += count
-                await asyncio.sleep(0.3)  # чтобы не поймать FloodWait
+                entity = InputUser(user_id, 0)  # access_hash не нужен для кастомных методов
+                count, error = await get_knockdown_count_safe(client, entity)
+                if error:
+                    report_lines.append(f"⚠️ {name}: ошибка — {error}")
+                else:
+                    report_lines.append(f"🎁 {name}: {count} knockdown")
             except Exception as e:
-                print(f"⚠️ Ошибка у {username or user_id}: {e}")
+                report_lines.append(f"❌ {name}: не удалось проверить — {e}")
 
-        # Отправляем результат
-        bot.send_message(chat_id, f"🎁 Общее количество knockdown-подарков у всех участников: {total}")
+        # Отправляем отчет по частям
+        chunk = ""
+        for line in report_lines:
+            if len(chunk + "\n" + line) > 4000:
+                bot.send_message(chat_id, chunk)
+                chunk = ""
+            chunk += line + "\n"
 
-        cur.close()
-        conn.close()
+        if chunk:
+            bot.send_message(chat_id, chunk)
 
 if __name__ == "__main__":
-    asyncio.run(report_total_knockdowns())
+    asyncio.run(main())
