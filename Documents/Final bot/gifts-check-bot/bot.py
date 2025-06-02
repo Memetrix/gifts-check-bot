@@ -60,21 +60,30 @@ def check_knockdowns(user_id: int) -> (int, str):
 @bot.callback_query_handler(func=lambda call: call.data == "check_gifts")
 def handle_check(call):
     user_id = call.from_user.id
+    username = call.from_user.username
 
+    # Если пользователь уже был одобрен ранее
     if is_approved(user_id):
-        bot.send_message(call.message.chat.id,
-            "✅ Ты уже прошёл проверку.\nЕсли у тебя есть доступ, не нужно генерировать ссылку повторно.")
-        return
-
-    try:
-        count, username = check_knockdowns(user_id)
-
-        if count == -1:
+        count, _ = check_knockdowns(user_id)
+        if count < 6:
             bot.send_message(call.message.chat.id,
-                "❗️Telegram не разрешает мне проверить твой профиль.\n"
-                "Убедись, что ты подписан на @narrator или напиши боту в личку.")
+                "❌ Ты был верифицирован ранее, но сейчас у тебя меньше 6 knockdown-подарков.\n"
+                "Пожалуйста, купи недостающие подарки на @mrkt.")
             return
+        else:
+            try:
+                invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
+                bot.send_message(call.message.chat.id,
+                    f"🔁 У тебя снова есть 6+ knockdown-подарков.\n"
+                    f"Вот новая персональная ссылка:\n{invite.invite_link}")
+                return
+            except Exception as e:
+                bot.send_message(call.message.chat.id, f"⚠️ Не удалось создать ссылку: {e}")
+                return
 
+    # Если пользователь не в базе — первая проверка
+    try:
+        count, _ = check_knockdowns(user_id)
         if count >= 6:
             invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
             bot.send_message(call.message.chat.id,
@@ -84,9 +93,9 @@ def handle_check(call):
         else:
             bot.send_message(call.message.chat.id,
                 f"❌ У тебя только {count} knockdown-подарков.\n"
-                "Попробуй докупить недостающие на @mrkt.")
-    except Exception:
-        bot.send_message(call.message.chat.id, "⚠️ Внутренняя ошибка. Попробуй позже.")
+                "Пожалуйста, купи недостающие подарки на @mrkt.")
+    except Exception as e:
+        bot.send_message(call.message.chat.id, f"⚠️ Ошибка при проверке: {e}")
         traceback.print_exc()
 
 # 📊 /sumgifts — общее количество knockdown у участников
