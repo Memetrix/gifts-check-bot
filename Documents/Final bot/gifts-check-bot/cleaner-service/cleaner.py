@@ -14,6 +14,12 @@ admin_user_id = int(os.getenv("ADMIN_USER_ID"))
 slava_user_id = 1911659577  # @slavasemenchuk
 chat_id = int(os.getenv("CHAT_ID"))
 
+# Админы, которых исключаем из логов (username без @ и user_id — на всякий случай)
+EXCLUDED_ADMINS = {
+    "gifts_check_bot", "KnockdownClub", "tap_monster", "knockdown_club",
+    8123231575, 934264793, 5855748096, 7071295533
+}
+
 # Подсчёт подарков
 async def get_knockdown_count_safe(client, user_id, access_hash):
     count = 0
@@ -58,6 +64,11 @@ async def main():
             total_users += 1
             user_id = user.id
             username = f"@{user.username}" if user.username else str(user_id)
+            username_key = user.username.lower() if user.username else None
+
+            # Пропуск админов
+            if user_id in EXCLUDED_ADMINS or (username_key and username_key in EXCLUDED_ADMINS):
+                continue
 
             if not user.access_hash:
                 report_lines.append(f"⚠️ {username}: нет access_hash — пропущен")
@@ -76,7 +87,6 @@ async def main():
         with open(log_path, "w", encoding="utf-8") as f:
             f.write("\n".join(report_lines))
 
-        # Отправка отчёта
         for uid in [admin_user_id, slava_user_id]:
             await client.send_file(uid, log_path, caption="📄 Отчёт по knockdown")
 
