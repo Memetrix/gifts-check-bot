@@ -14,7 +14,7 @@ api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID"))
 session_file = "cleaner-service/sessions/userbot2"
-DELAY = 1.5  # задержка между пользователями
+DELAY = 1.5  # задержка между пользователями в очереди
 
 bot = TeleBot(bot_token)
 bot.skip_pending = True
@@ -99,13 +99,13 @@ def start_message(message):
         "Нажми кнопку ниже, чтобы пройти проверку.",
         reply_markup=markup)
 
-# Поставить в очередь
+# 📥 Обработка inline-кнопки — ставим в очередь
 @bot.callback_query_handler(func=lambda call: call.data == "check_gifts")
 def handle_check(call):
-    asyncio.create_task(check_queue.put(call))
+    asyncio.get_event_loop().call_soon_threadsafe(check_queue.put_nowait, call)
     bot.answer_callback_query(call.id, "⏳ Пожалуйста, подожди. Твоя проверка добавлена в очередь.")
 
-# Очередь обработки
+# 👷 Обработчик очереди
 async def process_check_queue():
     while True:
         call = await check_queue.get()
