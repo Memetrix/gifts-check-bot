@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger("giftbot")
 
 # ────────────── TeleBot ─────────────
-bot = TeleBot(bot_token, num_threads=1)      # один поток → нет 409
+bot = TeleBot(bot_token, num_threads=1)
 bot.skip_pending = True
 
 # ────────── asyncio loop + userbot ─────────
@@ -102,6 +102,27 @@ def start_msg(msg):
         "Привет! Я проверяю, есть ли у тебя минимум 6 knockdown-подарков 🎁\n"
         "Нажми кнопку ниже, чтобы пройти проверку.",
         reply_markup=kb)
+
+# ───────── /sumgifts ─────────
+@bot.message_handler(commands=["sumgifts"])
+def sumgifts_handler(msg):
+    async def calculate():
+        total = 0
+        async for user in user_client.iter_participants(chat_id):
+            if user.bot or not user.access_hash:
+                continue
+            try:
+                count, _ = await check_knockdowns(user.id, user.username,
+                                                  user.first_name, user.last_name)
+                if count > 0:
+                    total += count
+            except Exception:
+                continue
+        bot.send_message(chat_id,
+            f"🔥 На счету бойцов уже <b>{total}</b> knockdown-подарков.\n"
+            f"💪 Кто следующий?",
+            parse_mode="HTML")
+    asyncio.run_coroutine_threadsafe(calculate(), main_loop)
 
 # ───── анти-спам кнопки ─────
 _last_click: dict[int, float] = {}
@@ -190,5 +211,5 @@ def start_async():
 
 threading.Thread(target=start_async, daemon=True).start()
 
-log.info("🤖 Бот запущен (Join-Request + auto-kick)")
+log.info("🤖 Бот запущен (Join-Request + auto-kick + /sumgifts)")
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
