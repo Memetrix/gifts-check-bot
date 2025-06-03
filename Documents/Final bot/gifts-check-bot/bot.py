@@ -106,7 +106,8 @@ def start_message(message):
 @bot.callback_query_handler(func=lambda call: call.data == "check_gifts")
 def handle_check(call):
     asyncio.run_coroutine_threadsafe(check_queue.put(call), main_loop)
-    bot.answer_callback_query(call.id, "⏳ Пожалуйста, подожди. Твоя проверка добавлена в очередь.")
+    bot.send_message(call.message.chat.id,
+        "⏳ Проверка началась. Пожалуйста, подожди — твой запрос добавлен в очередь.")
 
 # Обработчик очереди
 async def process_check_queue():
