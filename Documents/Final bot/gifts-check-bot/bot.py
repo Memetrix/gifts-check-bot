@@ -17,8 +17,8 @@ chat_id   = int(os.getenv("CHAT_ID"))
 session_file = "cleaner-service/sessions/userbot2"
 DELAY = 1.5
 
-# ───── TeleBot ─────
-bot = TeleBot(bot_token)
+# ───── TeleBot ─────  (один поток → нет 409)
+bot = TeleBot(bot_token, num_threads=1)
 bot.skip_pending = True
 
 # ───── asyncio loop ─────
@@ -69,10 +69,11 @@ async def check_knockdowns(user_id: int,
                 res = await client(GetUserStarGiftsRequest(entity, offset=off, limit=100))
                 for g in res.gifts:
                     gift = g.to_dict().get("gift")
-                    if gift:
-                        if any(attr.get("name","").lower()=="knockdown"
-                               for attr in gift.get("attributes", [])):
-                            cnt += 1
+                    if gift and any(
+                        a.get("name", "").lower() == "knockdown"
+                        for a in gift.get("attributes", [])
+                    ):
+                        cnt += 1
                 if not res.next_offset:
                     break
                 off = res.next_offset
@@ -104,15 +105,14 @@ async def process_check_queue():
     while True:
         call = await check_queue.get()
         try:
-            uid   = call.from_user.id
-            uname = call.from_user.username
-            fname = call.from_user.first_name
-            lname = call.from_user.last_name
-            now   = datetime.now(timezone.utc)
+            uid, uname = call.from_user.id, call.from_user.username
+            fname, lname = call.from_user.first_name, call.from_user.last_name
+            now = datetime.now(timezone.utc)
 
             if await is_user_in_group(uid):
                 bot.send_message(call.message.chat.id, "✅ Ты уже в группе! Всё в порядке.")
-                await asyncio.sleep(DELAY); continue
+                await asyncio.sleep(DELAY)
+                continue
 
             user = get_approved_user(uid)
             if user:
@@ -122,23 +122,27 @@ async def process_check_queue():
                 if cnt < 6:
                     bot.send_message(call.message.chat.id,
                         "❌ Сейчас у тебя меньше 6 knockdown-подарков.")
-                    await asyncio.sleep(DELAY); continue
+                    await asyncio.sleep(DELAY)
+                    continue
 
                 if invite_link and created_at and \
                    (now - created_at.replace(tzinfo=timezone.utc)) < timedelta(minutes=15):
                     bot.send_message(call.message.chat.id,
                         f"🔁 Ты недавно проходил проверку.\nВот ссылка:\n{invite_link}")
-                    await asyncio.sleep(DELAY); continue
+                    await asyncio.sleep(DELAY)
+                    continue
 
                 try:
                     inv = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
                     bot.send_message(call.message.chat.id,
                         f"🔁 Ты снова прошёл проверку! Вот новая ссылка:\n{inv.invite_link}")
                     save_approved(uid, uname, cnt, inv.invite_link)
-                    await asyncio.sleep(DELAY); continue
+                    await asyncio.sleep(DELAY)
+                    continue
                 except Exception as e:
                     bot.send_message(call.message.chat.id, f"⚠️ Не удалось создать ссылку: {e}")
-                    await asyncio.sleep(DELAY); continue
+                    await asyncio.sleep(DELAY)
+                    continue
 
             cnt, _ = await check_knockdowns(uid, uname, fname, lname)
             if cnt >= 6:
@@ -165,6 +169,5 @@ print("🤖 Бот запущен (num_threads=1 — без 409)")
 bot.infinity_polling(
     timeout=10,
     long_polling_timeout=5,
-    skip_pending=True,
-    num_threads=1    # ← один поток, Telegram 409 не выдаёт
+    skip_pending=True
 )
