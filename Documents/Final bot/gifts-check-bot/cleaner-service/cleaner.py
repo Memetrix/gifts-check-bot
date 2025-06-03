@@ -9,7 +9,7 @@ from get_user_star_gifts_request import GetUserStarGiftsRequest
 # Конфиг
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
-session_file = "sessions/userbot_session"
+session_file = "sessions/userbot2"
 admin_user_id = int(os.getenv("ADMIN_USER_ID"))
 slava_user_id = 1911659577
 chat_id = int(os.getenv("CHAT_ID"))
