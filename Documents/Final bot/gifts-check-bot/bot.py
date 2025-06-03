@@ -14,9 +14,12 @@ api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID"))
 session_file = "cleaner-service/sessions/userbot2"
+DELAY = 1.5  # задержка между пользователями
 
 bot = TeleBot(bot_token)
 bot.skip_pending = True
+
+check_queue = asyncio.Queue()
 
 # ✅ Проверка: состоит ли пользователь в группе
 async def is_user_in_group(user_id: int) -> bool:
@@ -96,68 +99,76 @@ def start_message(message):
         "Нажми кнопку ниже, чтобы пройти проверку.",
         reply_markup=markup)
 
-# Обработка inline-кнопки
+# Поставить в очередь
 @bot.callback_query_handler(func=lambda call: call.data == "check_gifts")
 def handle_check(call):
-    user_id = call.from_user.id
-    username = call.from_user.username
-    first_name = call.from_user.first_name
-    last_name = call.from_user.last_name
-    now = datetime.now(timezone.utc)
+    asyncio.create_task(check_queue.put(call))
+    bot.answer_callback_query(call.id, "⏳ Пожалуйста, подожди. Твоя проверка добавлена в очередь.")
 
-    # Проверка: уже в группе
-    if asyncio.run(is_user_in_group(user_id)):
-        bot.send_message(call.message.chat.id, "✅ Ты уже в группе! Всё в порядке.")
-        return
-
-    user = get_approved_user(user_id)
-
-    if user:
-        invite_link = user[2]
-        created_at = user[3]
-        count, _ = check_knockdowns(user_id, username, first_name, last_name)
-
-        if count < 6:
-            bot.send_message(call.message.chat.id,
-                "❌ Ранее ты проходил проверку, но сейчас у тебя меньше 6 knockdown-подарков.\n"
-                "Пожалуйста, пополни коллекцию и попробуй снова.")
-            return
-
-        if invite_link and created_at:
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
-
-            if (now - created_at) < timedelta(minutes=15):
-                bot.send_message(call.message.chat.id,
-                    f"🔁 Ты недавно прошёл проверку.\nВот твоя персональная ссылка:\n{invite_link}")
-                return
-
+# Очередь обработки
+async def process_check_queue():
+    while True:
+        call = await check_queue.get()
         try:
-            invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
-            bot.send_message(call.message.chat.id,
-                f"🔁 Ты снова прошёл проверку! Вот новая ссылка:\n{invite.invite_link}")
-            save_approved(user_id, username, count, invite.invite_link)
-            return
+            user_id = call.from_user.id
+            username = call.from_user.username
+            first_name = call.from_user.first_name
+            last_name = call.from_user.last_name
+            now = datetime.now(timezone.utc)
+
+            if await is_user_in_group(user_id):
+                bot.send_message(call.message.chat.id, "✅ Ты уже в группе! Всё в порядке.")
+                await asyncio.sleep(DELAY)
+                continue
+
+            user = get_approved_user(user_id)
+            if user:
+                invite_link = user[2]
+                created_at = user[3]
+                count, _ = check_knockdowns(user_id, username, first_name, last_name)
+
+                if count < 6:
+                    bot.send_message(call.message.chat.id,
+                        "❌ Ранее ты проходил проверку, но сейчас у тебя меньше 6 knockdown-подарков.")
+                    await asyncio.sleep(DELAY)
+                    continue
+
+                if invite_link and created_at:
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=timezone.utc)
+                    if (now - created_at) < timedelta(minutes=15):
+                        bot.send_message(call.message.chat.id,
+                            f"🔁 Ты недавно прошёл проверку.\nВот твоя персональная ссылка:\n{invite_link}")
+                        await asyncio.sleep(DELAY)
+                        continue
+
+                try:
+                    invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
+                    bot.send_message(call.message.chat.id,
+                        f"🔁 Ты снова прошёл проверку! Вот новая ссылка:\n{invite.invite_link}")
+                    save_approved(user_id, username, count, invite.invite_link)
+                    await asyncio.sleep(DELAY)
+                    continue
+                except Exception as e:
+                    bot.send_message(call.message.chat.id, f"⚠️ Не удалось создать ссылку: {e}")
+                    await asyncio.sleep(DELAY)
+                    continue
+
+            count, _ = check_knockdowns(user_id, username, first_name, last_name)
+            if count >= 6:
+                invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
+                bot.send_message(call.message.chat.id,
+                    f"✅ У тебя {count} knockdown-подарков. Доступ разрешён!\n"
+                    f"Вот твоя персональная ссылка:\n{invite.invite_link}")
+                save_approved(user_id, username, count, invite.invite_link)
+            else:
+                bot.send_message(call.message.chat.id,
+                    f"❌ У тебя только {count} knockdown-подарков.\nПожалуйста, купи недостающие на @mrkt.")
         except Exception as e:
-            bot.send_message(call.message.chat.id, f"⚠️ Не удалось создать ссылку: {e}")
-            return
+            bot.send_message(call.message.chat.id, "⚠️ Внутренняя ошибка. Попробуй позже.")
+            traceback.print_exc()
+        await asyncio.sleep(DELAY)
 
-    # Первый раз
-    try:
-        count, _ = check_knockdowns(user_id, username, first_name, last_name)
-        if count >= 6:
-            invite = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
-            bot.send_message(call.message.chat.id,
-                f"✅ У тебя {count} knockdown-подарков. Доступ разрешён!\n"
-                f"Вот твоя персональная ссылка:\n{invite.invite_link}")
-            save_approved(user_id, username, count, invite.invite_link)
-        else:
-            bot.send_message(call.message.chat.id,
-                f"❌ У тебя только {count} knockdown-подарков.\n"
-                "Пожалуйста, купи недостающие на @mrkt.")
-    except Exception as e:
-        bot.send_message(call.message.chat.id, "⚠️ Внутренняя ошибка. Попробуй позже.")
-        traceback.print_exc()
-
-print("🤖 Бот запущен и готов к работе")
+print("🤖 Бот запущен с очередью")
+asyncio.get_event_loop().create_task(process_check_queue())
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
