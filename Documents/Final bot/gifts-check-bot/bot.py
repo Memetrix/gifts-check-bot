@@ -14,14 +14,17 @@ api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 chat_id = int(os.getenv("CHAT_ID"))
 session_file = "cleaner-service/sessions/userbot2"
-DELAY = 1.5  # задержка между пользователями в очереди
+DELAY = 1.5
 
 bot = TeleBot(bot_token)
 bot.skip_pending = True
 
+# ⬇️ Создаём глобальный asyncio loop
+main_loop = asyncio.new_event_loop()
+asyncio.set_event_loop(main_loop)
+
 check_queue = asyncio.Queue()
 
-# ✅ Проверка: состоит ли пользователь в группе
 async def is_user_in_group(user_id: int) -> bool:
     async with TelegramClient(session_file, api_id, api_hash) as client:
         try:
@@ -34,7 +37,6 @@ async def is_user_in_group(user_id: int) -> bool:
         except:
             return False
 
-# Проверка knockdown-подарков
 def check_knockdowns(user_id: int, username: str = None, first_name: str = None, last_name: str = None) -> (int, str):
     async def run():
         async with TelegramClient(session_file, api_id, api_hash) as client:
@@ -71,13 +73,13 @@ def check_knockdowns(user_id: int, username: str = None, first_name: str = None,
                 while True:
                     result = await client(GetUserStarGiftsRequest(user_id=entity, offset=offset, limit=100))
                     for g in result.gifts:
-                        data = g.to_dict()
-                        gift = data.get("gift")
-                        if gift:
-                            for attr in gift.get("attributes", []):
-                                if "name" in attr and attr["name"].lower() == "knockdown":
-                                    count += 1
-                                    break
+                        gift = g.to_dict().get("gift")
+                        if not gift:
+                            continue
+                        for attr in gift.get("attributes", []):
+                            if "name" in attr and attr["name"].lower() == "knockdown":
+                                count += 1
+                                break
                     if not result.next_offset:
                         break
                     offset = result.next_offset
@@ -89,7 +91,6 @@ def check_knockdowns(user_id: int, username: str = None, first_name: str = None,
                 return -1, None
     return asyncio.run(run())
 
-# /start
 @bot.message_handler(commands=["start"])
 def start_message(message):
     markup = types.InlineKeyboardMarkup()
@@ -99,13 +100,11 @@ def start_message(message):
         "Нажми кнопку ниже, чтобы пройти проверку.",
         reply_markup=markup)
 
-# 📥 Обработка inline-кнопки — ставим в очередь
 @bot.callback_query_handler(func=lambda call: call.data == "check_gifts")
 def handle_check(call):
-    asyncio.run_coroutine_threadsafe(check_queue.put(call), asyncio.get_event_loop())
+    asyncio.run_coroutine_threadsafe(check_queue.put(call), main_loop)
     bot.answer_callback_query(call.id, "⏳ Пожалуйста, подожди. Твоя проверка добавлена в очередь.")
 
-# 👷 Обработчик очереди
 async def process_check_queue():
     while True:
         call = await check_queue.get()
@@ -170,5 +169,5 @@ async def process_check_queue():
         await asyncio.sleep(DELAY)
 
 print("🤖 Бот запущен с очередью")
-asyncio.get_event_loop().create_task(process_check_queue())
+main_loop.create_task(process_check_queue())
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
