@@ -52,7 +52,6 @@ async def check_knockdowns(uid: int, username=None,
                            first_name=None, last_name=None) -> tuple[int, str | None]:
     try:
         ent = None
-        # поиск entity
         try:
             ent = await user_client.get_input_entity(uid)
             log.info("✅ %s найден по user_id", uid)
@@ -127,7 +126,6 @@ async def process_queue():
             uname = call.from_user.username
             fname,lname = call.from_user.first_name, call.from_user.last_name
 
-            # считаем коробки
             cnt, _ = await check_knockdowns(uid, uname, fname, lname)
             if cnt < 6 or cnt == -1:
                 bot.send_message(call.message.chat.id,
@@ -135,11 +133,10 @@ async def process_queue():
                     "Нужно минимум 6.")
                 await asyncio.sleep(DELAY); continue
 
-            # создаём ссылку Join-Request
             inv = bot.create_chat_invite_link(
                 chat_id,
-                creates_join_request=True,          # ← правильный параметр
-                expire_date=int(time.time())+3600,  # час жизни
+                creates_join_request=True,
+                expire_date=int(time.time())+3600,
                 name=f"gift-{uid}"
             )
             bot.send_message(call.message.chat.id,
@@ -167,6 +164,24 @@ def join_req(req):
             log.info("🚫 %s declined (%s knockdown)", uid, cnt)
     asyncio.run_coroutine_threadsafe(approve_flow(), main_loop)
 
+# ───── auto-kick обходящих JoinRequest ─────
+@bot.chat_member_handler()
+def guard(msg: types.ChatMemberUpdated):
+    new = msg.new_chat_member
+    if new.status == 'member' and not new.user.is_bot:
+        async def check_and_kick():
+            cnt, _ = await check_knockdowns(
+                new.user.id, new.user.username,
+                new.user.first_name, new.user.last_name
+            )
+            if cnt < 6:
+                try:
+                    bot.ban_chat_member(chat_id, new.user.id, until_date=int(time.time()) + 60)
+                    log.warning("⛔️ auto-kick %s (%s KD)", new.user.id, cnt)
+                except Exception as e:
+                    log.error("❌ не смог кикнуть %s → %s", new.user.id, e)
+        asyncio.run_coroutine_threadsafe(check_and_kick(), main_loop)
+
 # ───────── запуск background loop ─────────
 def start_async():
     main_loop.create_task(init_userbot())
@@ -175,5 +190,5 @@ def start_async():
 
 threading.Thread(target=start_async, daemon=True).start()
 
-log.info("🤖 Бот запущен (Join-Request)")
+log.info("🤖 Бот запущен (Join-Request + auto-kick)")
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
