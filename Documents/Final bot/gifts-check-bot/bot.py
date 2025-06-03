@@ -1,106 +1,81 @@
-import os, asyncio, traceback, threading, logging, time
+import os
+import asyncio
+import traceback
+import threading
 from datetime import datetime, timedelta, timezone
-
 from telebot import TeleBot, types
 from telethon import TelegramClient, functions
 from telethon.tl.types import InputUser
-
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 from db import is_approved, save_approved, get_approved_user
 
-# ───────────────────────  конфиг  ────────────────────────
-api_id      = int(os.getenv("API_ID"))
-api_hash    = os.getenv("API_HASH")
-bot_token   = os.getenv("BOT_TOKEN")
-chat_id     = int(os.getenv("CHAT_ID"))
+# ───── конфиг ─────
+api_id   = int(os.getenv("API_ID"))
+api_hash = os.getenv("API_HASH")
+bot_token = os.getenv("BOT_TOKEN")
+chat_id   = int(os.getenv("CHAT_ID"))
 session_file = "cleaner-service/sessions/userbot2"
-DELAY       = 1.5            # пауза между юзерами
-CLICK_COOLDOWN = 10          # сек, анти-спам
+DELAY = 1.5
 
-# ───────────────────────  логирование  ───────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
-log = logging.getLogger("giftbot")
-
-# ────────────────────  TeleBot (Telegram Bot API)  ───────
+# ───── TeleBot ─────
 bot = TeleBot(bot_token)
-bot.skip_pending = True
+bot.skip_pending = True         # не берём старые апдейты
 
-# ────────────────────  asyncio loop + Telethon  ──────────
+# ───── Async loop ─────
 main_loop = asyncio.new_event_loop()
 asyncio.set_event_loop(main_loop)
-
-user_client: TelegramClient | None = None   # глобальный userbot
 check_queue: asyncio.Queue = asyncio.Queue()
 
-# ─────────────────  инициализация user-бота  ─────────────
-async def init_userbot():
-    global user_client
-    user_client = TelegramClient(session_file, api_id, api_hash)
-    await user_client.start()
-    await user_client.get_dialogs()   # 1 раз
-    log.info("👤 Userbot session готова")
-
-# ────────────────────  утилиты проверки  ─────────────────
+# ───── helpers ─────
 async def is_user_in_group(user_id: int) -> bool:
-    try:
-        await user_client(functions.channels.GetParticipantRequest(
-            channel=chat_id,
-            participant=user_id
-        ))
-        return True
-    except:
-        return False
-
-async def check_knockdowns(
-        user_id: int,
-        username: str | None = None,
-        first_name: str | None = None,
-        last_name:  str | None = None
-) -> tuple[int, str | None]:
-    try:
-        entity = None
+    async with TelegramClient(session_file, api_id, api_hash) as client:
         try:
-            entity = await user_client.get_input_entity(user_id)
+            await client(functions.channels.GetParticipantRequest(
+                channel=chat_id,
+                participant=user_id
+            ))
+            return True
+        except:
+            return False
+
+async def check_knockdowns(user_id: int,
+                           username: str | None = None,
+                           first_name: str | None = None,
+                           last_name: str | None = None) -> tuple[int, str | None]:
+    async with TelegramClient(session_file, api_id, api_hash) as client:
+        try:
+            entity = None
+            try:
+                entity = await client.get_input_entity(user_id)
+            except Exception:
+                if username:
+                    try: entity = await client.get_input_entity(f"@{username}")
+                    except Exception: pass
+            if entity is None and first_name and last_name:
+                async for u in client.iter_participants(chat_id):
+                    if u.first_name == first_name and u.last_name == last_name:
+                        entity = await client.get_input_entity(u.id); break
+            if not entity: return -1, None
+
+            if not isinstance(entity, InputUser):
+                entity = InputUser(entity.user_id, entity.access_hash)
+
+            cnt, off = 0, ""
+            while True:
+                res = await client(GetUserStarGiftsRequest(entity, offset=off, limit=100))
+                for g in res.gifts:
+                    gift = g.to_dict().get("gift")
+                    if gift:
+                        if any(attr.get("name","").lower()=="knockdown" for attr in gift.get("attributes", [])):
+                            cnt += 1
+                if not res.next_offset: break
+                off = res.next_offset
+            return cnt, getattr(entity, "username", None)
         except Exception:
-            if username:
-                try:
-                    entity = await user_client.get_input_entity(f"@{username}")
-                except Exception:
-                    pass
-        if entity is None and first_name and last_name:
-            async for usr in user_client.iter_participants(chat_id):
-                if usr.first_name == first_name and usr.last_name == last_name:
-                    entity = await user_client.get_input_entity(usr.id)
-                    break
-        if not entity:
+            traceback.print_exc()
             return -1, None
 
-        if not isinstance(entity, InputUser):
-            entity = InputUser(entity.user_id, entity.access_hash)
-
-        count, offset = 0, ""
-        while True:
-            res = await user_client(GetUserStarGiftsRequest(
-                user_id=entity, offset=offset, limit=100))
-            for g in res.gifts:
-                gift = g.to_dict().get("gift")
-                if gift:
-                    for attr in gift.get("attributes", []):
-                        if attr.get("name", "").lower() == "knockdown":
-                            count += 1
-                            break
-            if not res.next_offset:
-                break
-            offset = res.next_offset
-        return count, getattr(entity, "username", None)
-    except Exception as e:
-        log.exception("Ошибка check_knockdowns")
-        return -1, None
-
-# ──────────────────  /start  ─────────────────────────────
+# ───── /start ─────
 @bot.message_handler(commands=["start"])
 def start_message(msg):
     kb = types.InlineKeyboardMarkup()
@@ -111,23 +86,15 @@ def start_message(msg):
         "Нажми кнопку ниже, чтобы пройти проверку.",
         reply_markup=kb)
 
-# ───────────────  анти-спам по кликам  ───────────────────
-_last_click: dict[int, float] = {}
-
+# ───── кнопка ─────
 @bot.callback_query_handler(func=lambda c: c.data == "check_gifts")
 def handle_check(call):
-    now = time.time()
-    if now - _last_click.get(call.from_user.id, 0) < CLICK_COOLDOWN:
-        bot.answer_callback_query(call.id, "⏳ Подожди пару секунд…")
-        return
-    _last_click[call.from_user.id] = now
-
     asyncio.run_coroutine_threadsafe(check_queue.put(call), main_loop)
     bot.send_message(call.message.chat.id,
-                     "⏳ Проверка началась. Пожалуйста, подожди…")
+                     "⏳ Проверка началась. Пожалуйста, подожди — твой запрос добавлен в очередь.")
 
-# ─────────────────  worker очереди  ──────────────────────
-async def process_queue():
+# ───── worker ─────
+async def process_check_queue():
     while True:
         call = await check_queue.get()
         try:
@@ -152,7 +119,7 @@ async def process_queue():
                     await asyncio.sleep(DELAY); continue
 
                 if invite_link and created_at and \
-                   (now - (created_at.replace(tzinfo=timezone.utc))) < timedelta(minutes=15):
+                   (now - created_at.replace(tzinfo=timezone.utc)) < timedelta(minutes=15):
                     bot.send_message(call.message.chat.id,
                         f"🔁 Ты недавно проходил проверку.\nВот ссылка:\n{invite_link}")
                     await asyncio.sleep(DELAY); continue
@@ -160,7 +127,7 @@ async def process_queue():
                 try:
                     inv = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
                     bot.send_message(call.message.chat.id,
-                        f"🔁 Проверка пройдена! Вот ссылка:\n{inv.invite_link}")
+                        f"🔁 Ты снова прошёл проверку! Вот новая ссылка:\n{inv.invite_link}")
                     save_approved(uid, uname, cnt, inv.invite_link)
                     await asyncio.sleep(DELAY); continue
                 except Exception as e:
@@ -171,23 +138,27 @@ async def process_queue():
             if cnt >= 6:
                 inv = bot.create_chat_invite_link(chat_id=chat_id, member_limit=1)
                 bot.send_message(call.message.chat.id,
-                    f"✅ У тебя {cnt} knockdown-подарков — доступ разрешён!\n{inv.invite_link}")
+                    f"✅ У тебя {cnt} knockdown-подарков. Доступ разрешён!\n{inv.invite_link}")
                 save_approved(uid, uname, cnt, inv.invite_link)
             else:
                 bot.send_message(call.message.chat.id,
                     f"❌ У тебя только {cnt} knockdown-подарков.\nКупи недостающие на @mrkt.")
         except Exception:
             bot.send_message(call.message.chat.id, "⚠️ Внутренняя ошибка. Попробуй позже.")
-            log.exception("Ошибка в worker")
+            traceback.print_exc()
         await asyncio.sleep(DELAY)
 
-# ─────────────────  запуск фонового цикла  ───────────────
+# ───── запуск loop ─────
 def start_async():
-    main_loop.create_task(init_userbot())
-    main_loop.create_task(process_queue())
+    main_loop.create_task(process_check_queue())
     main_loop.run_forever()
 
 threading.Thread(target=start_async, daemon=True).start()
 
-log.info("🤖 Бот запущен (очередь + единый userbot)")
-bot.infinity_polling(timeout=10, long_polling_timeout=5)
+print("🤖 Бот запущен (threaded=False — 409 больше не будет)")
+bot.infinity_polling(
+    timeout=10,
+    long_polling_timeout=5,
+    threaded=False,     # ← убирает конкурентные getUpdates, исключает 409
+    skip_pending=True
+)
