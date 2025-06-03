@@ -20,18 +20,10 @@ DELAY = 1.5
 bot = TeleBot(bot_token)
 bot.skip_pending = True
 
+# Глобальный event loop
 main_loop = asyncio.new_event_loop()
 asyncio.set_event_loop(main_loop)
 check_queue = asyncio.Queue()
-
-# Кэш подписчиков @narrator
-subscribers_cache = set()
-
-async def preload_narrator_subscribers():
-    async with TelegramClient(session_file, api_id, api_hash) as client:
-        async for user in client.iter_participants("@narrator"):
-            subscribers_cache.add(user.id)
-    print(f"👥 Кэш @narrator загружен: {len(subscribers_cache)} пользователей")
 
 # Проверка: состоит ли пользователь в группе
 async def is_user_in_group(user_id: int) -> bool:
@@ -113,12 +105,6 @@ def start_message(message):
 # Кнопка проверки
 @bot.callback_query_handler(func=lambda call: call.data == "check_gifts")
 def handle_check(call):
-    user_id = call.from_user.id
-    if user_id not in subscribers_cache:
-        bot.send_message(call.message.chat.id,
-            "📢 Пожалуйста, подпишись на канал @narrator и нажми кнопку снова.")
-        return
-
     asyncio.run_coroutine_threadsafe(check_queue.put(call), main_loop)
     bot.send_message(call.message.chat.id,
         "⏳ Проверка началась. Пожалуйста, подожди — твой запрос добавлен в очередь.")
@@ -189,11 +175,10 @@ async def process_check_queue():
 
 # Старт loop-а в фоновом потоке
 def start_async_loop():
-    main_loop.create_task(preload_narrator_subscribers())
-    main_loop.create_task(process_check_queue())
     main_loop.run_forever()
 
 threading.Thread(target=start_async_loop, daemon=True).start()
+main_loop.create_task(process_check_queue())
 
-print("🤖 Бот запущен с очередью и проверкой подписки")
+print("🤖 Бот запущен с очередью")
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
