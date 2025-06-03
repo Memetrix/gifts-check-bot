@@ -169,5 +169,14 @@ async def process_check_queue():
         await asyncio.sleep(DELAY)
 
 print("🤖 Бот запущен с очередью")
+# Запускаем обработчик очереди
 main_loop.create_task(process_check_queue())
+
+# Запускаем event loop в фоновом потоке
+import threading
+def start_loop():
+    main_loop.run_forever()
+threading.Thread(target=start_loop, daemon=True).start()
+
+# Запускаем polling
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
