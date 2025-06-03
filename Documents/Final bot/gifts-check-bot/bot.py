@@ -102,7 +102,8 @@ def start_message(message):
 # 📥 Обработка inline-кнопки — ставим в очередь
 @bot.callback_query_handler(func=lambda call: call.data == "check_gifts")
 def handle_check(call):
-    asyncio.get_event_loop().call_soon_threadsafe(check_queue.put_nowait, call)
+    loop = asyncio.get_event_loop_policy().get_event_loop()
+    loop.call_soon_threadsafe(check_queue.put_nowait, call)
     bot.answer_callback_query(call.id, "⏳ Пожалуйста, подожди. Твоя проверка добавлена в очередь.")
 
 # 👷 Обработчик очереди
