@@ -9,7 +9,7 @@ from telethon.tl.types import InputUser
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 from db import is_approved, save_approved, get_approved_user
 
-# ───── конфиг ─────
+# ───── конфигурация ─────
 api_id   = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
@@ -19,9 +19,9 @@ DELAY = 1.5
 
 # ───── TeleBot ─────
 bot = TeleBot(bot_token)
-bot.skip_pending = True         # не берём старые апдейты
+bot.skip_pending = True
 
-# ───── Async loop ─────
+# ───── asyncio loop ─────
 main_loop = asyncio.new_event_loop()
 asyncio.set_event_loop(main_loop)
 check_queue: asyncio.Queue = asyncio.Queue()
@@ -49,13 +49,17 @@ async def check_knockdowns(user_id: int,
                 entity = await client.get_input_entity(user_id)
             except Exception:
                 if username:
-                    try: entity = await client.get_input_entity(f"@{username}")
-                    except Exception: pass
+                    try:
+                        entity = await client.get_input_entity(f"@{username}")
+                    except Exception:
+                        pass
             if entity is None and first_name and last_name:
                 async for u in client.iter_participants(chat_id):
                     if u.first_name == first_name and u.last_name == last_name:
-                        entity = await client.get_input_entity(u.id); break
-            if not entity: return -1, None
+                        entity = await client.get_input_entity(u.id)
+                        break
+            if not entity:
+                return -1, None
 
             if not isinstance(entity, InputUser):
                 entity = InputUser(entity.user_id, entity.access_hash)
@@ -66,9 +70,11 @@ async def check_knockdowns(user_id: int,
                 for g in res.gifts:
                     gift = g.to_dict().get("gift")
                     if gift:
-                        if any(attr.get("name","").lower()=="knockdown" for attr in gift.get("attributes", [])):
+                        if any(attr.get("name","").lower()=="knockdown"
+                               for attr in gift.get("attributes", [])):
                             cnt += 1
-                if not res.next_offset: break
+                if not res.next_offset:
+                    break
                 off = res.next_offset
             return cnt, getattr(entity, "username", None)
         except Exception:
@@ -155,10 +161,10 @@ def start_async():
 
 threading.Thread(target=start_async, daemon=True).start()
 
-print("🤖 Бот запущен (threaded=False — 409 больше не будет)")
+print("🤖 Бот запущен (num_threads=1 — без 409)")
 bot.infinity_polling(
     timeout=10,
     long_polling_timeout=5,
-    threaded=False,     # ← убирает конкурентные getUpdates, исключает 409
-    skip_pending=True
+    skip_pending=True,
+    num_threads=1    # ← один поток, Telegram 409 не выдаёт
 )
