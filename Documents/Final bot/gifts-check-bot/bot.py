@@ -119,7 +119,6 @@ def sumgifts_handler(msg):
 
     _last_sumgifts_call = now
     log.info("📥 /sumgifts запрошен")
-
     bot.send_message(chat_id, "🔄 Считаем knockdown-подарки… Это может занять 1–2 минуты.")
 
     async def calculate():
@@ -172,6 +171,13 @@ async def process_queue():
                     f"❌ У тебя {cnt if cnt!=-1 else 0} knockdown-подарков. "
                     "Нужно минимум 6.")
                 await asyncio.sleep(DELAY); continue
+
+            # 🔓 Разбан перед выдачей ссылки
+            try:
+                await bot.unban_chat_member(chat_id, uid)
+                log.info("🔓 %s unbanned перед выдачей ссылки", uid)
+            except Exception:
+                pass
 
             inv = bot.create_chat_invite_link(
                 chat_id,
@@ -230,5 +236,5 @@ def start_async():
 
 threading.Thread(target=start_async, daemon=True).start()
 
-log.info("🤖 Бот запущен (Join-Request + auto-kick + /sumgifts)")
+log.info("🤖 Бот запущен (Join-Request + auto-kick + /sumgifts + auto-unban)")
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
