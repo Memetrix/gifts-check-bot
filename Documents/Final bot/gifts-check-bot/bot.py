@@ -49,24 +49,25 @@ async def is_user_in_group(uid: int) -> bool:
         return False
 
 async def check_knockdowns(uid: int, username=None,
-                           first_name=None, last_name=None) -> tuple[int, str | None]:
+                           first_name=None, last_name=None,
+                           verbose: bool = True) -> tuple[int, str | None]:
     try:
         ent = None
         try:
             ent = await user_client.get_input_entity(uid)
-            log.info("✅ %s найден по user_id", uid)
+            if verbose: log.info("✅ %s найден по user_id", uid)
         except Exception:
             if username:
                 try:
                     ent = await user_client.get_input_entity(f"@{username}")
-                    log.info("✅ %s найден по username @%s", uid, username)
+                    if verbose: log.info("✅ %s найден по username @%s", uid, username)
                 except Exception:
                     pass
         if ent is None and first_name and last_name:
             async for u in user_client.iter_participants(chat_id):
                 if u.first_name == first_name and u.last_name == last_name:
                     ent = await user_client.get_input_entity(u.id)
-                    log.info("✅ %s найден по имени %s %s", uid, first_name, last_name)
+                    if verbose: log.info("✅ %s найден по имени %s %s", uid, first_name, last_name)
                     break
         if not ent:
             return -1, None
@@ -86,10 +87,10 @@ async def check_knockdowns(uid: int, username=None,
             if not res.next_offset:
                 break
             off = res.next_offset
-        log.info("🎯 %s → %s knockdown", uid, cnt)
+        if verbose: log.info("🎯 %s → %s knockdown", uid, cnt)
         return cnt, getattr(ent, "username", None)
     except Exception:
-        log.exception("check_knockdowns")
+        if verbose: log.exception("check_knockdowns")
         return -1, None
 
 # ───────── /start ─────────
@@ -119,6 +120,8 @@ def sumgifts_handler(msg):
     _last_sumgifts_call = now
     log.info("📥 /sumgifts запрошен")
 
+    bot.send_message(chat_id, "🔄 Считаем knockdown-подарки… Это может занять 1–2 минуты.")
+
     async def calculate():
         total = 0
         async for user in user_client.iter_participants(chat_id):
@@ -126,7 +129,8 @@ def sumgifts_handler(msg):
                 continue
             try:
                 count, _ = await check_knockdowns(user.id, user.username,
-                                                  user.first_name, user.last_name)
+                                                  user.first_name, user.last_name,
+                                                  verbose=False)
                 if count > 0:
                     total += count
             except Exception:
