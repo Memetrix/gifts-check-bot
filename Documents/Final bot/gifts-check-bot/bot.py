@@ -104,8 +104,21 @@ def start_msg(msg):
         reply_markup=kb)
 
 # ───────── /sumgifts ─────────
+_last_sumgifts_call: float = 0
+SUMGIFTS_COOLDOWN = 600  # 10 минут
+
 @bot.message_handler(commands=["sumgifts"])
 def sumgifts_handler(msg):
+    global _last_sumgifts_call
+
+    now = time.time()
+    if now - _last_sumgifts_call < SUMGIFTS_COOLDOWN:
+        bot.reply_to(msg, "⏳ Подожди немного. Эту команду можно запускать раз в 10 минут.")
+        return
+
+    _last_sumgifts_call = now
+    log.info("📥 /sumgifts запрошен")
+
     async def calculate():
         total = 0
         async for user in user_client.iter_participants(chat_id):
@@ -122,6 +135,8 @@ def sumgifts_handler(msg):
             f"🔥 На счету бойцов уже <b>{total}</b> knockdown-подарков.\n"
             f"💪 Кто следующий?",
             parse_mode="HTML")
+        log.info("✅ /sumgifts выполнен")
+
     asyncio.run_coroutine_threadsafe(calculate(), main_loop)
 
 # ───── анти-спам кнопки ─────
