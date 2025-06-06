@@ -1,8 +1,7 @@
-import os, asyncio, threading, logging, time, traceback
+import os, asyncio, threading, logging, time, traceback, json
 from telebot import TeleBot, types
 from telethon import TelegramClient
 from telethon.tl.types import InputUser
-
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 from db import get_community_rule, save_approved
 
@@ -10,12 +9,11 @@ from db import get_community_rule, save_approved
 api_id   = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 session_path = os.getenv("SESSION_PATH", "cleaner-service/sessions/userbot2.session")
+bot_tokens   = [os.getenv("BOT_TOKEN"), os.getenv("BOT_TOKEN_2")]
 
-bot_tokens = [os.getenv("BOT_TOKEN"), os.getenv("BOT_TOKEN_2")]  # можно добавить ещё
+DUMP_UID = int(os.getenv("DUMP_UID", "0"))      # ← TG-ID для gift-dump (0 = выключено)
 
-DELAY = 1.5
-CLICK_COOLDOWN = 10
-SUMGIFTS_COOLDOWN = 600  # 10 мин
+DELAY, CLICK_COOLDOWN, SUMGIFTS_COOLDOWN = 1.5, 10, 600
 
 # ───────── LOGS ─────────
 logging.basicConfig(level=logging.INFO,
@@ -42,18 +40,13 @@ async def init_userbot():
 
 # ───────── HELPERS ─────────
 def matches_rule(gift: dict, ftype: str, fval: str) -> bool:
-    if ftype == "model":
-        return gift.get("model") == fval
-    if ftype == "slug":
-        return gift.get("slug") == fval
-    if ftype == "collection":
-        return gift.get("collection") == fval
-    if ftype == "attribute":        # ищем значение во всех полях атрибута
-        target = fval.lower()
-        for a in gift.get("attributes", []):
-            if any(isinstance(v, str) and v.lower() == target for v in a.values()):
-                return True
-        return False
+    if ftype == "model":       return gift.get("model") == fval
+    if ftype == "slug":        return gift.get("slug")  == fval
+    if ftype == "collection":  return gift.get("collection") == fval
+    if ftype == "attribute":
+        tgt = fval.lower()
+        return any(isinstance(v, str) and v.lower() == tgt
+                   for a in gift.get("attributes", []) for v in a.values())
     if ftype == "name":
         return gift.get("name", "").lower().startswith(fval.lower())
     return False
@@ -62,37 +55,36 @@ async def count_valid_gifts(uid, chat_id, username=None, first=None, last=None) 
     rule = get_community_rule(chat_id)
     ftype, fval = rule["filter_type"], rule["filter_value"]
 
-    # — ищем InputUser —
+    # — InputUser —
     ent = None
-    try:
-        ent = await user_client.get_input_entity(uid)
+    try: ent = await user_client.get_input_entity(uid)
     except:
         if username:
-            try:
-                ent = await user_client.get_input_entity(f"@{username}")
-            except:
-                pass
+            try: ent = await user_client.get_input_entity(f"@{username}")
+            except: pass
     if ent is None and first and last:
         async for u in user_client.iter_participants(chat_id):
             if u.first_name == first and u.last_name == last:
-                ent = await user_client.get_input_entity(u.id)
-                break
-    if not ent:
-        return -1
+                ent = await user_client.get_input_entity(u.id); break
+    if not ent: return -1
     if not isinstance(ent, InputUser):
         ent = InputUser(ent.user_id, ent.access_hash)
 
-    # — пролистываем подарки —
-    total, offset = 0, ""
+    # — gifts —
+    total, offset, dumped = 0, "", False
     while True:
         res = await user_client(GetUserStarGiftsRequest(
             user_id=ent, offset=offset, limit=100
         ))
         for g in res.gifts:
-            if matches_rule(g.to_dict().get("gift", {}), ftype, fval):
+            gift_dict = g.to_dict().get("gift", {})
+            if not dumped and DUMP_UID and uid == DUMP_UID:
+                log.warning("GIFT DUMP (%s) →\n%s",
+                            uid, json.dumps(gift_dict, indent=2, ensure_ascii=False)[:1500])
+                dumped = True
+            if matches_rule(gift_dict, ftype, fval):
                 total += 1
-        if not res.next_offset:
-            break
+        if not res.next_offset: break
         offset = res.next_offset
     return total
 
@@ -100,7 +92,7 @@ async def count_valid_gifts(uid, chat_id, username=None, first=None, last=None) 
 _last_click: dict[int, float] = {}
 _last_sumgifts_call = 0.0
 
-# ───────── HANDLERS (на каждый бот) ─────────
+# ───────── HANDLERS ─────────
 def setup(bot: TeleBot):
 
     @bot.message_handler(commands=["start"])
@@ -115,32 +107,25 @@ def setup(bot: TeleBot):
     def sumgifts(msg):
         global _last_sumgifts_call
         if time.time() - _last_sumgifts_call < SUMGIFTS_COOLDOWN:
-            bot.reply_to(msg, "⏳ Подождите, команда доступна раз в 10 минут.")
-            return
-        _last_sumgifts_call = time.time()
-        bot.reply_to(msg, "🔄 Считаем подарки клуба…")
+            bot.reply_to(msg, "⏳ Подождите, команда доступна раз в 10 минут."); return
+        _last_sumgifts_call = time.time(); bot.reply_to(msg, "🔄 Считаем подарки клуба…")
 
-        async def calculate():
+        async def calc():
             total = 0
             async for u in user_client.iter_participants(msg.chat.id):
-                if u.bot or not u.access_hash:
-                    continue
+                if u.bot or not u.access_hash: continue
                 cnt = await count_valid_gifts(u.id, msg.chat.id, u.username,
                                               u.first_name, u.last_name)
-                if cnt > 0:
-                    total += cnt
+                if cnt > 0: total += cnt
             bot.send_message(msg.chat.id,
-                f"🔥 В клубе уже <b>{total}</b> подарков по условиям.",
-                parse_mode="HTML")
-        asyncio.run_coroutine_threadsafe(calculate(), main_loop)
+                f"🔥 В клубе <b>{total}</b> подарков по условиям.", parse_mode="HTML")
+        asyncio.run_coroutine_threadsafe(calc(), main_loop)
 
     @bot.callback_query_handler(func=lambda c: c.data == "check_gifts")
     def check(call):
-        now = time.time()
-        if now - _last_click.get(call.from_user.id, 0) < CLICK_COOLDOWN:
-            bot.answer_callback_query(call.id, "⏳ Подождите немного…")
-            return
-        _last_click[call.from_user.id] = now
+        if time.time() - _last_click.get(call.from_user.id,0) < CLICK_COOLDOWN:
+            bot.answer_callback_query(call.id, "⏳ Подождите немного…"); return
+        _last_click[call.from_user.id] = time.time()
         asyncio.run_coroutine_threadsafe(check_queue.put(call), main_loop)
         bot.send_message(call.message.chat.id, "⏳ Проверка началась, подождите…")
 
@@ -171,18 +156,16 @@ def setup(bot: TeleBot):
                 if cnt < rule["min_gifts"]:
                     try:
                         await bot.ban_chat_member(ev.chat.id, new.user.id,
-                                                  until_date=int(time.time()) + 60)
-                    except:
-                        pass
+                                                  until_date=int(time.time())+60)
+                    except: pass
             asyncio.run_coroutine_threadsafe(kick_if_needed(), main_loop)
 
-# ───────── WORKER QUEUE ─────────
+# ───────── QUEUE WORKER ─────────
 async def queue_worker():
     while True:
         call = await check_queue.get()
         try:
-            cid = call.message.chat.id
-            uid = call.from_user.id
+            cid, uid = call.message.chat.id, call.from_user.id
             cnt = await count_valid_gifts(uid, cid,
                                           call.from_user.username,
                                           call.from_user.first_name,
@@ -194,15 +177,11 @@ async def queue_worker():
             else:
                 link = bots[0].create_chat_invite_link(
                     cid, creates_join_request=True,
-                    expire_date=int(time.time()) + 3600,
-                    name=f"gift-{uid}"
-                )
+                    expire_date=int(time.time())+3600, name=f"gift-{uid}")
                 bots[0].send_message(cid,
-                    f"✅ Всё ок! Ссылка действует час:\n{link.invite_link}")
-                save_approved(cid, uid, call.from_user.username,
-                              cnt, link.invite_link)
-        except Exception:
-            traceback.print_exc()
+                    f"✅ Всё ок! Ссылка на вход действует час:\n{link.invite_link}")
+                save_approved(cid, uid, call.from_user.username, cnt, link.invite_link)
+        except Exception: traceback.print_exc()
         await asyncio.sleep(DELAY)
 
 # ───────── STARTUP ─────────
@@ -212,8 +191,7 @@ def bootstrap():
     main_loop.run_forever()
 
 threading.Thread(target=bootstrap, daemon=True).start()
-for b in bots:
-    setup(b)
+for b in bots: setup(b)
 
-log.info("🤖 Все боты запущены (одна user-сессия)")
+log.info("🤖 Боты запущены (одна user-сессия)")
 bots[0].infinity_polling(timeout=10, long_polling_timeout=5)
