@@ -27,6 +27,15 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("giftbot")
 
+# ───────── helper для безопасного JSON ─────────
+def safe_json(obj) -> str:
+    """json.dumps без падения на bytes/нестандартных типах."""
+    def _default(o):
+        if isinstance(o, (bytes, bytearray)):
+            return f"<{len(o)} bytes>"
+        return str(o)
+    return json.dumps(obj, default=_default, ensure_ascii=False)
+
 # ───────── FRONT BOTS ─────────
 bots: list[TeleBot] = [TeleBot(tok, num_threads=1) for tok in bot_tokens]
 for b in bots:
@@ -87,10 +96,9 @@ async def count_gifts(uid: int, chat_id: int,
 
             if RAW:
                 log.info("GIFT RAW chat=%s user=%s → %s",
-                         chat_id, uid,
-                         json.dumps(gift, ensure_ascii=False)[:2000])
+                         chat_id, uid, safe_json(gift)[:2000])
 
-            # ① Knockdown (старый строгий атрибут)
+            # ① Knockdown (строгий атрибут name=Knockdown)
             if ftype == "attribute":
                 if any(a.get("name", "").lower() == fval.lower()
                        for a in gift.get("attributes", [])):
