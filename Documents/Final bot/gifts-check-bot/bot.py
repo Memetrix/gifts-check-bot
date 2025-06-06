@@ -72,7 +72,9 @@ async def count_valid_gifts(uid, chat_id, username=None, first=None, last=None) 
     # считаем подарки
     total, offset = 0, ""
     while True:
-        res = await user_client(GetUserStarGiftsRequest(ent, offset, 100))
+        res = await user_client(
+                GetUserStarGiftsRequest(user_id=ent, offset=offset, limit=100)
+              )
         for g in res.gifts:
             gift = g.to_dict().get("gift", {})
             if matches_rule(gift, ftype, fval):
