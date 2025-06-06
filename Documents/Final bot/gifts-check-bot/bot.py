@@ -47,11 +47,11 @@ def matches_rule(gift: dict, ftype: str, fval: str) -> bool:
     if ftype == "model":       return gift.get("model")       == fval
     if ftype == "slug":        return gift.get("slug")        == fval
     if ftype == "collection":  return gift.get("collection")  == fval
-        # атрибуты (Knockdown и любые другие)
-        if ftype == "attribute":
-            for a in gift.get("attributes", []):
-                if a.get("name", "").lower() == fval.lower():
-                    return True
+    # атрибуты (Knockdown и любые другие)
+    if ftype == "attribute":
+        for a in gift.get("attributes", []):
+            if a.get("name", "").lower() == fval.lower():
+                return True
     return False
 
 async def count_valid_gifts(uid, chat_id, username=None, first=None, last=None) -> int:
