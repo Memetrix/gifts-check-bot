@@ -1,4 +1,4 @@
-import os, asyncio, threading, logging, time, traceback
+import os, asyncio, threading, logging, time, json, traceback
 from telebot import TeleBot, types
 from telethon import TelegramClient
 from telethon.tl.types import InputUser
@@ -13,11 +13,14 @@ api_hash = os.getenv("API_HASH")
 session_path = "cleaner-service/sessions/userbot2"
 
 # BOT_TOKEN, BOT_TOKEN_2, BOT_TOKEN_3 …
-bot_tokens = [v for k, v in os.environ.items() if k.startswith("BOT_TOKEN") and v]
+bot_tokens = [v for k, v in os.environ.items()
+              if k.startswith("BOT_TOKEN") and v]
 
 DELAY              = 1.5
 CLICK_COOLDOWN     = 10
 SUMGIFTS_COOLDOWN  = 600   # 10 мин
+
+RAW = os.getenv("LOG_RAW_GIFTS", "0") == "1"   # 1 → логировать каждый gift
 
 # ───────── LOGS ─────────
 logging.basicConfig(level=logging.INFO,
@@ -44,20 +47,20 @@ async def init_userbot():
 
 # ───────── HELPERS ─────────
 def matches_rule(gift: dict, ftype: str, fval: str) -> bool:
-    """универсальная проверка (кроме Knockdown — см. ниже)"""
+    """Проверка для slug/model/collection/name (Knockdown атрибут обрабатывается отдельно)."""
     if ftype == "slug":        return gift.get("slug")        == fval
     if ftype == "model":       return gift.get("model")       == fval
     if ftype == "collection":  return gift.get("collection")  == fval
     if ftype == "name":        return gift.get("name", "").startswith(fval)
-    return False  # атрибуты обрабатываются отдельно
+    return False
 
 async def count_gifts(uid: int, chat_id: int,
                       username=None, first=None, last=None) -> int:
-    """подсчёт c учётом правила клуба"""
+    """Возвращает количество подарков, подходящих под правило клуба."""
     rule = get_community_rule(chat_id)
     ftype, fval = rule["filter_type"], rule["filter_value"]
 
-    # --- InputUser ---
+    # — InputUser —
     ent = None
     try:
         ent = await user_client.get_input_entity(uid)
@@ -74,7 +77,7 @@ async def count_gifts(uid: int, chat_id: int,
     if not isinstance(ent, InputUser):
         ent = InputUser(ent.user_id, ent.access_hash)
 
-    # --- подарки ---
+    # — gifts —
     total, offset = 0, ""
     while True:
         res = await user_client(GetUserStarGiftsRequest(
@@ -82,13 +85,18 @@ async def count_gifts(uid: int, chat_id: int,
         for g in res.gifts:
             gift = g.to_dict().get("gift", {})
 
-            # ① старый строгий счётчик Knockdown (как было)
+            if RAW:
+                log.info("GIFT RAW chat=%s user=%s → %s",
+                         chat_id, uid,
+                         json.dumps(gift, ensure_ascii=False)[:2000])
+
+            # ① Knockdown (старый строгий атрибут)
             if ftype == "attribute":
                 if any(a.get("name", "").lower() == fval.lower()
                        for a in gift.get("attributes", [])):
                     total += 1
 
-            # ② остальные правила (Ion Gem и др.)
+            # ② slug/model/collection/name
             elif matches_rule(gift, ftype, fval):
                 total += 1
 
@@ -106,7 +114,8 @@ def setup(bot: TeleBot):
     @bot.message_handler(commands=["start"])
     def cmd_start(msg):
         kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🔍 Проверить подарки", callback_data="check_gifts"))
+        kb.add(types.InlineKeyboardButton("🔍 Проверить подарки",
+                                          callback_data="check_gifts"))
         bot.send_message(msg.chat.id,
             "👋 Добро пожаловать!\nНажмите кнопку, чтобы пройти проверку доступа.",
             reply_markup=kb)
@@ -125,9 +134,11 @@ def setup(bot: TeleBot):
             total = 0
             async for u in user_client.iter_participants(cid):
                 if u.bot or not u.access_hash: continue
-                c = await count_gifts(u.id, cid, u.username, u.first_name, u.last_name)
+                c = await count_gifts(u.id, cid,
+                                      u.username, u.first_name, u.last_name)
                 if c > 0: total += c
-            bot.send_message(cid, f"🔥 В клубе <b>{total}</b> подарков.", parse_mode="HTML")
+            bot.send_message(cid,
+                f"🔥 В клубе <b>{total}</b> подарков.", parse_mode="HTML")
         asyncio.run_coroutine_threadsafe(calc(), main_loop)
 
     @bot.callback_query_handler(func=lambda c: c.data == "check_gifts")
@@ -181,6 +192,10 @@ async def queue_worker():
                                     call.from_user.first_name,
                                     call.from_user.last_name)
             rule = get_community_rule(cid)
+
+            log.info("CHECK chat=%s user=%s → %s gifts (need %s)",
+                     cid, uid, cnt, rule["min_gifts"])
+
             if cnt < rule["min_gifts"]:
                 bots[0].send_message(cid,
                     f"❌ У вас {cnt} подарков, нужно {rule['min_gifts']}.")
@@ -190,10 +205,11 @@ async def queue_worker():
                     expire_date=int(time.time())+3600, name=f"gift-{uid}")
                 bots[0].send_message(cid,
                     f"✅ Всё ок! Ссылка действует час:\n{link.invite_link}")
-                save_approved(cid, uid, call.from_user.username, cnt, link.invite_link)
+                save_approved(cid, uid, call.from_user.username,
+                              cnt, link.invite_link)
         except Exception:
             traceback.print_exc()
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(DELAY)
 
 # ───────── STARTUP ─────────
 def bootstrap():
