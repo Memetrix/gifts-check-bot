@@ -1,2 +1,1 @@
-worker: python bot_knockdown.py
-worker: python bot_iongem.py
+worker: python bot.py
