@@ -2,8 +2,6 @@ import os, asyncio, threading, logging, time, json, traceback
 from telebot import TeleBot, types
 from telethon import TelegramClient
 from telethon.tl.types import InputUser
-from telethon.tl import functions
-
 from get_user_star_gifts_request import GetUserStarGiftsRequest
 from db import get_community_rule, save_approved
 
@@ -16,11 +14,8 @@ session_path = "cleaner-service/sessions/userbot2"
 bot_tokens = [v for k, v in os.environ.items()
               if k.startswith("BOT_TOKEN") and v]
 
-DELAY              = 1.5
-CLICK_COOLDOWN     = 10
-SUMGIFTS_COOLDOWN  = 600   # 10 мин
-
-RAW = os.getenv("LOG_RAW_GIFTS", "0") == "1"   # 1 → логировать каждый gift
+DELAY, CLICK_COOLDOWN, SUMGIFTS_COOLDOWN = 1.5, 10, 600
+RAW = os.getenv("LOG_RAW_GIFTS", "0") == "1"        # 1 → логировать JSON подарков
 
 # ───────── LOGS ─────────
 logging.basicConfig(level=logging.INFO,
@@ -29,7 +24,6 @@ log = logging.getLogger("giftbot")
 
 # ───────── helper для безопасного JSON ─────────
 def safe_json(obj) -> str:
-    """json.dumps без падения на bytes/нестандартных типах."""
     def _default(o):
         if isinstance(o, (bytes, bytearray)):
             return f"<{len(o)} bytes>"
@@ -54,25 +48,35 @@ async def init_userbot():
     await user_client.get_dialogs()
     log.info("👤 userbot session started")
 
-# ───────── HELPERS ─────────
+# ───────── RULE MATCHERS ─────────
 def matches_rule(gift: dict, ftype: str, fval: str) -> bool:
-    """Проверка для slug/model/collection/name (Knockdown атрибут обрабатывается отдельно)."""
-    if ftype == "slug":        return gift.get("slug")        == fval
-    if ftype == "model":       return gift.get("model")       == fval
-    if ftype == "collection":  return gift.get("collection")  == fval
+    """slug/model/collection/name"""
+    if ftype == "slug":        return str(gift.get("slug"))        == fval
+    if ftype == "model":       return gift.get("model")            == fval
+    if ftype == "collection":  return gift.get("collection")       == fval
     if ftype == "name":        return gift.get("name", "").startswith(fval)
     return False
 
+def attribute_match(gift: dict, target: str) -> bool:
+    """Knockdown, Ion Gem и любые другие — ищем в attributes[].name, title, slug"""
+    tgt = target.lower()
+    if any(a.get("name", "").lower() == tgt for a in gift.get("attributes", [])):
+        return True
+    if gift.get("title", "").lower().startswith(tgt):
+        return True
+    if str(gift.get("slug", "")).lower().startswith(tgt):
+        return True
+    return False
+
+# ───────── MAIN COUNTER ─────────
 async def count_gifts(uid: int, chat_id: int,
                       username=None, first=None, last=None) -> int:
-    """Возвращает количество подарков, подходящих под правило клуба."""
     rule = get_community_rule(chat_id)
     ftype, fval = rule["filter_type"], rule["filter_value"]
 
-    # — InputUser —
+    # InputUser
     ent = None
-    try:
-        ent = await user_client.get_input_entity(uid)
+    try: ent = await user_client.get_input_entity(uid)
     except:
         if username:
             try: ent = await user_client.get_input_entity(f"@{username}")
@@ -81,12 +85,11 @@ async def count_gifts(uid: int, chat_id: int,
         async for u in user_client.iter_participants(chat_id):
             if u.first_name == first and u.last_name == last:
                 ent = await user_client.get_input_entity(u.id); break
-    if not ent:
-        return -1
+    if not ent: return -1
     if not isinstance(ent, InputUser):
         ent = InputUser(ent.user_id, ent.access_hash)
 
-    # — gifts —
+    # Gifts paging
     total, offset = 0, ""
     while True:
         res = await user_client(GetUserStarGiftsRequest(
@@ -98,16 +101,12 @@ async def count_gifts(uid: int, chat_id: int,
                 log.info("GIFT RAW chat=%s user=%s → %s",
                          chat_id, uid, safe_json(gift)[:2000])
 
-            # ① Knockdown (строгий атрибут name=Knockdown)
-            if ftype == "attribute":
-                if any(a.get("name", "").lower() == fval.lower()
-                       for a in gift.get("attributes", [])):
-                    total += 1
-
-            # ② slug/model/collection/name
+            # Attribute rules (Knockdown / Ion Gem и т.д.)
+            if ftype == "attribute" and attribute_match(gift, fval):
+                total += 1
+            # Generic rules
             elif matches_rule(gift, ftype, fval):
                 total += 1
-
         if not res.next_offset: break
         offset = res.next_offset
     return total
@@ -116,17 +115,15 @@ async def count_gifts(uid: int, chat_id: int,
 _last_click: dict[int, float] = {}
 _last_sumgifts: dict[int, float] = {}
 
-# ───────── HANDLERS ─────────
+# ───────── HANDLER SETUP ─────────
 def setup(bot: TeleBot):
 
     @bot.message_handler(commands=["start"])
     def cmd_start(msg):
         kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🔍 Проверить подарки",
-                                          callback_data="check_gifts"))
+        kb.add(types.InlineKeyboardButton("🔍 Проверить подарки", callback_data="check_gifts"))
         bot.send_message(msg.chat.id,
-            "👋 Добро пожаловать!\nНажмите кнопку, чтобы пройти проверку доступа.",
-            reply_markup=kb)
+            "👋 Добро пожаловать! Нажмите кнопку, чтобы пройти проверку.", reply_markup=kb)
 
     @bot.message_handler(commands=["sumgifts"])
     def cmd_sumgifts(msg):
@@ -135,18 +132,14 @@ def setup(bot: TeleBot):
             bot.reply_to(msg, "⏳ Можно раз в 10 минут."); return
         _last_sumgifts[cid] = time.time()
         rule = get_community_rule(cid)
-        bot.reply_to(msg,
-            f"🔄 Считаем подарки ({rule['filter_type']}={rule['filter_value']})…")
+        bot.reply_to(msg, f"🔄 Считаем подарки ({rule['filter_type']}={rule['filter_value']})…")
 
         async def calc():
             total = 0
             async for u in user_client.iter_participants(cid):
                 if u.bot or not u.access_hash: continue
-                c = await count_gifts(u.id, cid,
-                                      u.username, u.first_name, u.last_name)
-                if c > 0: total += c
-            bot.send_message(cid,
-                f"🔥 В клубе <b>{total}</b> подарков.", parse_mode="HTML")
+                total += max(0, await count_gifts(u.id, cid, u.username, u.first_name, u.last_name))
+            bot.send_message(cid, f"🔥 В клубе <b>{total}</b> подарков.", parse_mode="HTML")
         asyncio.run_coroutine_threadsafe(calc(), main_loop)
 
     @bot.callback_query_handler(func=lambda c: c.data == "check_gifts")
